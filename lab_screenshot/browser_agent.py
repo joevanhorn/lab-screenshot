@@ -363,7 +363,11 @@ You are controlling a Playwright browser that is already authenticated to the Ok
 - If a direct URL path gives a 404, use sidebar click navigation instead
 - After clicking, always verify with get_page_state that you arrived at the right page
 - Dismiss popup overlays by clicking close/dismiss buttons
-- Some steps in the guide refer to actions on external platforms (attack simulators, virtual desktops) — skip those steps and only capture screenshots for [SCREENSHOT] markers that show Okta Admin Console pages
+- Some steps in the guide refer to actions on external platforms (attack simulators, virtual desktops) — skip those steps but still capture screenshots for the admin console pages
+- The guide may reference specific data (log entries, specific users, etc.) that doesn't exist in this environment. That's OK — navigate to the correct page and capture it as-is. The screenshot shows the right page/feature, even if the specific data differs.
+
+## IMPORTANT: Always capture screenshots
+When you reach a [SCREENSHOT] marker and you're on the correct page (or the closest page you can navigate to), ALWAYS call capture_screenshot. Don't skip a screenshot because the page doesn't show the exact data described. The goal is to show the right admin console page/feature.
 
 ## Screenshot markers in this guide
 {marker_summary}
