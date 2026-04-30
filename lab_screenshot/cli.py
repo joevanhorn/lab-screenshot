@@ -107,10 +107,15 @@ def cmd_run(args):
     for m in markers:
         print(f"  [{m.index}] Line {m.line}: {m.description}")
 
+    use_agent = getattr(args, "agent", False)
+
     # --- Resolve Okta org URLs ---
     org = args.org.rstrip("/")
     admin_url = org.replace(".okta.com", "-admin.okta.com") if "-admin" not in org else org
-    base_org = org.replace("-admin.okta.com", ".okta.com") if "-admin" in org else org
+    # Also handle oktapreview.com
+    if ".oktapreview.com" in org and "-admin" not in org:
+        admin_url = org.replace(".oktapreview.com", "-admin.oktapreview.com")
+    base_org = org.replace("-admin.okta.com", ".okta.com").replace("-admin.oktapreview.com", ".oktapreview.com") if "-admin" in org else org
 
     # --- Authenticate ---
     username = args.username or input("Okta username: ").strip()
@@ -205,33 +210,35 @@ def cmd_run(args):
         except Exception:
             pass
 
-        # --- Capture screenshots at each marker ---
-        print(f"\nCapturing {len(markers)} screenshots...")
-        for marker in markers:
-            print(f"  [{marker.index}] {marker.description}")
+        if use_agent:
+            # --- LLM Agent mode: agent reads guide and drives browser ---
+            print(f"\nStarting LLM agent (model: {os.environ.get('LLM_MODEL', 'auto')})...")
+            from .browser_agent import BrowserAgent
+            agent = BrowserAgent(page=page, admin_url=admin_url)
+            images = agent.process_guide(text)
+        else:
+            # --- Manual mode: user provides navigation ---
+            print(f"\nCapturing {len(markers)} screenshots...")
+            for marker in markers:
+                print(f"  [{marker.index}] {marker.description}")
 
-            # The guide text before this marker describes what page to be on.
-            # In the simple flow, the agent/user navigates manually or via
-            # the --pages argument. For now, prompt the user or use --pages.
-            if args.pages:
-                # Pages provided as comma-separated URL paths
-                pages_list = [p.strip() for p in args.pages.split(",")]
-                if marker.index < len(pages_list):
-                    nav_path = pages_list[marker.index]
-                    url = f"{admin_url}{nav_path}" if nav_path.startswith("/") else nav_path
-                    print(f"    Navigating to: {url}")
-                    page.goto(url, wait_until="networkidle", timeout=30000)
-                    page.wait_for_timeout(args.delay / 1000 * 1000)
-            elif not args.no_prompt:
-                # Interactive mode — ask user where to navigate
-                nav = input(f"    Navigate to (URL path or Enter to capture current page): ").strip()
-                if nav:
-                    url = f"{admin_url}{nav}" if nav.startswith("/") else nav
-                    page.goto(url, wait_until="networkidle", timeout=30000)
-                    page.wait_for_timeout(2000)
+                if args.pages:
+                    pages_list = [p.strip() for p in args.pages.split(",")]
+                    if marker.index < len(pages_list):
+                        nav_path = pages_list[marker.index]
+                        url = f"{admin_url}{nav_path}" if nav_path.startswith("/") else nav_path
+                        print(f"    Navigating to: {url}")
+                        page.goto(url, wait_until="networkidle", timeout=30000)
+                        page.wait_for_timeout(args.delay / 1000 * 1000)
+                elif not args.no_prompt:
+                    nav = input(f"    Navigate to (URL path or Enter to capture current page): ").strip()
+                    if nav:
+                        url = f"{admin_url}{nav}" if nav.startswith("/") else nav
+                        page.goto(url, wait_until="networkidle", timeout=30000)
+                        page.wait_for_timeout(2000)
 
-            images[marker.index] = capture_to_base64(page, delay_ms=500)
-            print(f"    Captured: {len(images[marker.index]):,} chars")
+                images[marker.index] = capture_to_base64(page, delay_ms=500)
+                print(f"    Captured: {len(images[marker.index]):,} chars")
 
         context.close()
 
@@ -305,6 +312,8 @@ def main():
     run_p.add_argument("--delay", type=int, default=2000, help="Delay after navigation (ms)")
     run_p.add_argument("--visible", action="store_true", help="Show browser window")
     run_p.add_argument("--profile-dir", help="Browser profile directory")
+    run_p.add_argument("--agent", action="store_true", help="Use LLM agent to drive browser (reads guide steps, navigates autonomously)")
+
 
     args = parser.parse_args()
 
