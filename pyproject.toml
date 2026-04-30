@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lab-screenshot"
+version = "0.1.0"
+description = "Automated screenshot tool for Okta admin console lab guides"
+requires-python = ">=3.10"
+dependencies = [
+    "playwright>=1.40.0",
+    "pyotp>=2.9.0",
+]
+
+[project.scripts]
+lab-screenshot = "lab_screenshot.cli:main"
