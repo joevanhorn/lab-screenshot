@@ -353,21 +353,56 @@ You are controlling a Playwright browser that is already authenticated to the Ok
 - capture_screenshot: Capture the page (only at [SCREENSHOT] markers)
 - done: Signal completion
 
-## Navigation tips for the Okta Admin Console
-- The left sidebar has collapsible sections (Security, Reports, Applications, etc.)
-- To navigate to a sub-page like "System Log" under "Reports":
-  1. Call get_page_state to see the sidebar
-  2. Click the section header to expand it (e.g., click on the Reports menu item)
-  3. Call get_page_state again to see the expanded sub-items
-  4. Click the specific sub-item
-- If a direct URL path gives a 404, use sidebar click navigation instead
-- After clicking, always verify with get_page_state that you arrived at the right page
+## Okta Admin Console URL Reference
+The admin console is a SPA. Many pages only work via specific paths. Use this reference:
+
+### Direct URL paths (navigate tool — append to admin base URL):
+- Dashboard: /admin/dashboard
+- People: /admin/users
+- Groups: /admin/groups
+- Applications: /admin/apps/active
+- AI Agents: /admin/workload-principals/ai-agents
+- MCP Servers: /admin/directory/mcp-servers
+- Profile Editor: /admin/universaldirectory
+- Directory Integrations: /admin/people/directories
+- Global Session Policy: /admin/access/policies
+- Authentication Policies (App Sign-In): /admin/authentication-policies/app-sign-in
+- Authenticators (MFA): /admin/access/multifactor
+- Networks: /admin/access/networks
+- Identity Threat Protection: /admin/access/identity-threat-protection/session-protection
+- Entity Risk Policy: /admin/access/entity-risk-policy
+- HealthInsight: /admin/access/healthinsight
+- General Security: /admin/access/general
+- Tasks: /admin/tasks
+- Brands: /admin/customizations/brands
+
+### Special paths (use the ORG domain, not admin domain):
+- System Log: navigate to the ORG base URL + /report/system_log_2
+  Example: if admin is https://org-admin.okta.com, system log is https://org.okta.com/report/system_log_2
+
+### Two-step navigation (go to parent page, then click):
+- Specific auth policy rule: go to /admin/authentication-policies/app-sign-in first, then click the policy name, then click Edit on the rule
+- Specific app settings: go to /admin/apps/active, find the app, click it
+
+### Navigation tips
+- If a URL gives a 404, try the reference paths above first
+- The sidebar has collapsible sections — clicking a section header expands it to show a dashboard view, NOT sub-navigation links
+- After clicking, verify with get_page_state that you arrived at the right page
 - Dismiss popup overlays by clicking close/dismiss buttons
+- For the System Log, you MUST use the org domain URL, not the admin domain
 - Some steps in the guide refer to actions on external platforms (attack simulators, virtual desktops) — skip those steps but still capture screenshots for the admin console pages
 - The guide may reference specific data (log entries, specific users, etc.) that doesn't exist in this environment. That's OK — navigate to the correct page and capture it as-is. The screenshot shows the right page/feature, even if the specific data differs.
 
-## IMPORTANT: Always capture screenshots
-When you reach a [SCREENSHOT] marker and you're on the correct page (or the closest page you can navigate to), ALWAYS call capture_screenshot. Don't skip a screenshot because the page doesn't show the exact data described. The goal is to show the right admin console page/feature.
+## CRITICAL RULE: Always capture screenshots
+When you reach a [SCREENSHOT] marker:
+1. Navigate to the CLOSEST matching page in the admin console
+2. Call capture_screenshot IMMEDIATELY once you're on a relevant page
+3. Do NOT try to reach the exact sub-page, specific record, or edit dialog — the page-level view is sufficient
+4. Do NOT skip a screenshot because the data doesn't match the description
+5. If you've navigated to the general area described by the marker (e.g., you're on "Authentication Policies" for a marker about "policy rule configured with MFA"), CAPTURE IT
+6. Move on to the next marker after capturing — don't retry or refine
+
+The goal is to show the correct admin console FEATURE/PAGE, not the exact pixel-perfect view described in the marker text.
 
 ## Screenshot markers in this guide
 {marker_summary}
@@ -381,10 +416,22 @@ When you reach the point in the guide where a [SCREENSHOT: ...] marker appears, 
 - Be persistent — if one approach fails, try another (different selector, force click, etc.)
 - Call done when you've processed all sections and captured all possible screenshots"""
 
+        # Strip existing base64 images from guide text to avoid context overflow.
+        # The LLM only needs the text instructions and markers, not embedded images.
+        import re
+        clean_text = re.sub(r'\[image\d+\]:\s*<data:image[^>]*>', '', guide_text)
+        clean_text = re.sub(r'data:image/[^;]+;base64,[A-Za-z0-9+/=]+', '[existing-image-removed]', clean_text)
+        # Also strip any very long lines (likely base64 remnants)
+        lines = clean_text.split('\n')
+        clean_lines = [l if len(l) < 500 else l[:100] + '...[truncated]' for l in lines]
+        clean_text = '\n'.join(clean_lines)
+
+        self._log(f"Guide text: {len(guide_text):,} chars → {len(clean_text):,} chars (cleaned)")
+
         messages = [
             {
                 "role": "user",
-                "content": f"Here is the lab guide. Follow each step you can execute in the Okta Admin Console and capture screenshots at the marked points:\n\n---\n\n{guide_text}",
+                "content": f"Here is the lab guide. Follow each step you can execute in the Okta Admin Console and capture screenshots at the marked points:\n\n---\n\n{clean_text}",
             }
         ]
 
@@ -401,8 +448,19 @@ When you reach the point in the guide where a [SCREENSHOT: ...] marker appears, 
             litellm_kwargs["api_base"] = os.environ["LITELLM_API_BASE"]
             litellm_kwargs["api_key"] = os.environ.get("LITELLM_API_KEY", "")
 
+        # Track how many iterations since the last capture — force capture if stuck
+        iterations_since_last_capture = 0
+        last_captured_count = 0
+
         for iteration in range(max_iterations):
             self._log(f"iteration {iteration + 1}/{max_iterations}")
+
+            # Force capture if agent has been working on same marker for too long
+            if iterations_since_last_capture >= 15 and len(self.images) < len(markers):
+                next_marker = len(self.images)
+                self._log(f"FORCED capture for marker {next_marker} (stuck for {iterations_since_last_capture} iterations)")
+                self._tool_capture({"marker_index": next_marker})
+                iterations_since_last_capture = 0
 
             try:
                 response = self.completion(
@@ -447,6 +505,13 @@ When you reach the point in the guide where a [SCREENSHOT: ...] marker appears, 
 
                 # Update kwargs with new messages
                 litellm_kwargs["messages"] = messages
+
+                # Track iterations since last capture
+                if len(self.images) > last_captured_count:
+                    last_captured_count = len(self.images)
+                    iterations_since_last_capture = 0
+                else:
+                    iterations_since_last_capture += 1
 
                 if is_done:
                     break
