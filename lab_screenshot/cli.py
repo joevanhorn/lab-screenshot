@@ -262,6 +262,221 @@ def cmd_run(args):
     print(f"\nDone! {len(images)}/{len(markers)} markers replaced.")
 
 
+def cmd_record(args):
+    """Record-then-extract: Pass 1 records everything, Pass 2 selects best frames via vision."""
+    from .guide import parse_markers, replace_markers
+    from .recorder import GuideRecorder
+    from .frame_selector import select_frames
+
+    guide_path = Path(args.guide)
+    if not guide_path.exists():
+        print(f"ERROR: Guide not found: {guide_path}", file=sys.stderr)
+        sys.exit(1)
+
+    output_path = Path(args.output) if args.output else guide_path
+    text = guide_path.read_text(encoding="utf-8")
+    markers = parse_markers(text)
+
+    if not markers:
+        print("No [SCREENSHOT: ...] markers found.")
+        return
+
+    print(f"Found {len(markers)} markers in {guide_path}")
+    for m in markers:
+        print(f"  [{m.index}] Line {m.line}: {m.description}")
+
+    use_setup = getattr(args, "setup", False)
+
+    # --- Resolve org URL ---
+    org = args.org.rstrip("/")
+
+    from playwright.sync_api import sync_playwright
+
+    profile = args.profile_dir or os.path.expanduser("~/.okta-lab-screenshots/record-profile")
+
+    print(f"\n=== Pass 1: Record ===")
+
+    if use_setup:
+        # --- Interactive setup: user authenticates in a visible browser ---
+        print("Opening browser for manual authentication...")
+        print(f"  Navigate to: {org}")
+        print(f"  Log in, reach the page you want the bot to start from,")
+        print(f"  then CLOSE the browser window to continue.")
+        print()
+
+        shutil.rmtree(profile, ignore_errors=True)
+        os.makedirs(profile, exist_ok=True)
+
+        with sync_playwright() as p:
+            context = p.chromium.launch_persistent_context(
+                user_data_dir=profile,
+                headless=False,
+                viewport={"width": args.width, "height": args.height},
+                args=["--disable-blink-features=AutomationControlled"],
+            )
+            page = context.pages[0] if context.pages else context.new_page()
+            page.goto(org, wait_until="networkidle", timeout=60000)
+
+            # Wait for user to close the browser
+            try:
+                page.wait_for_event("close", timeout=600000)  # 10 min
+            except Exception:
+                pass
+
+            context.close()
+
+        print(f"  Session saved to: {profile}")
+        print(f"  Continuing headlessly...\n")
+
+        # Determine admin URL from what the user landed on
+        # Default: use the org URL as-is (lab environments may not follow standard patterns)
+        admin_url = org
+
+    else:
+        # --- Headless authentication via authn API ---
+        admin_url = org.replace(".okta.com", "-admin.okta.com") if "-admin" not in org else org
+        if ".oktapreview.com" in org and "-admin" not in org:
+            admin_url = org.replace(".oktapreview.com", "-admin.oktapreview.com")
+        base_org = org.replace("-admin.okta.com", ".okta.com").replace("-admin.oktapreview.com", ".oktapreview.com") if "-admin" in org else org
+
+        username = args.username or input("Okta username: ").strip()
+        password = args.password or getpass.getpass("Okta password: ")
+        print(f"Authenticating as {username}...")
+
+        try:
+            import pyotp
+        except ImportError:
+            print("ERROR: pyotp required. pip install pyotp", file=sys.stderr)
+            sys.exit(1)
+
+        body = json.dumps({"username": username, "password": password}).encode()
+        req = urllib.request.Request(f"{base_org}/api/v1/authn", data=body, method="POST")
+        req.add_header("Content-Type", "application/json")
+        try:
+            with urllib.request.urlopen(req) as resp:
+                data = json.loads(resp.read().decode())
+        except urllib.error.HTTPError as e:
+            print(f"ERROR: Authentication failed ({e.code})", file=sys.stderr)
+            sys.exit(1)
+
+        session_token = data.get("sessionToken")
+        if not session_token:
+            print(f"ERROR: No session token. Status: {data.get('status')}", file=sys.stderr)
+            sys.exit(1)
+
+        shutil.rmtree(profile, ignore_errors=True)
+        os.makedirs(profile, exist_ok=True)
+
+        cookie_url = f"{base_org}/login/sessionCookieRedirect?token={session_token}&redirectUrl={admin_url}/admin/dashboard"
+
+        with sync_playwright() as p:
+            context = p.chromium.launch_persistent_context(
+                user_data_dir=profile,
+                headless=not args.visible,
+                viewport={"width": args.width, "height": args.height},
+                args=["--disable-blink-features=AutomationControlled"],
+            )
+            page = context.pages[0] if context.pages else context.new_page()
+            page.goto(cookie_url, wait_until="networkidle", timeout=30000)
+            page.wait_for_timeout(2000)
+            page.goto(f"{admin_url}/admin/dashboard", wait_until="networkidle", timeout=30000)
+            page.wait_for_timeout(2000)
+
+            page_text_body = page.inner_text("body")
+            if "Enter a code" in page_text_body or "credentials.totp" in page.content():
+                if not args.totp_secret:
+                    code = input("Enter MFA code: ").strip()
+                else:
+                    code = pyotp.TOTP(args.totp_secret).now()
+                print(f"  Entering TOTP...")
+                page.fill('input[name="credentials.totp"]', code)
+                page.click('input[data-type="save"]')
+                page.wait_for_timeout(5000)
+
+            page_text_body = page.inner_text("body")
+            if "Stay signed in" in page_text_body:
+                page.click('a[data-se="stay-signed-in-btn"]')
+                page.wait_for_timeout(5000)
+
+            print(f"  Authenticated: {page.url}")
+
+            context.close()
+
+    # --- Pass 1: Record (headless, using saved profile) ---
+    print("Starting recording pass...")
+    with sync_playwright() as p:
+        context = p.chromium.launch_persistent_context(
+            user_data_dir=profile,
+            headless=not args.visible,
+            viewport={"width": args.width, "height": args.height},
+            args=["--disable-blink-features=AutomationControlled"],
+        )
+        page = context.pages[0] if context.pages else context.new_page()
+
+        # If we came from headless auth, navigate to the start page
+        if not use_setup:
+            page.goto(f"{admin_url}/admin/dashboard", wait_until="networkidle", timeout=30000)
+            page.wait_for_timeout(2000)
+
+        # Dismiss any popups
+        try:
+            cb = page.locator('button:has-text("Close"), [aria-label="Close"]').first
+            if cb.is_visible(timeout=2000):
+                cb.click()
+        except Exception:
+            pass
+
+        print(f"  Starting URL: {page.url}")
+
+        recorder = GuideRecorder(
+            page=page,
+            admin_url=admin_url,
+            output_dir=args.recording_dir,
+        )
+        recording = recorder.record_guide(text)
+
+        context.close()
+
+    print(f"\nPass 1 complete: {len(recording.frames)} frames captured")
+    print(f"  Recording: {args.recording_dir}/")
+
+    # --- Pass 2: Select ---
+    print(f"\n=== Pass 2: Select best frames via vision ===")
+
+    frames_meta = [
+        {
+            "index": f.index,
+            "url": f.url,
+            "title": f.title,
+            "action": f.action,
+            "png_path": f.png_path,
+        }
+        for f in recording.frames
+    ]
+
+    images = select_frames(frames_meta, markers)
+
+    print(f"\nPass 2 complete: {len(images)}/{len(markers)} frames selected")
+
+    # --- Replace markers ---
+    print(f"\nWriting output...")
+    updated = replace_markers(text, images)
+    output_path.write_text(updated, encoding="utf-8")
+    print(f"  Written to: {output_path}")
+
+    if args.save_pngs:
+        import base64 as b64mod
+        png_dir = output_path.parent / "screenshots"
+        png_dir.mkdir(exist_ok=True)
+        for i, data_uri in images.items():
+            png = b64mod.b64decode(data_uri.split(",")[1])
+            out = png_dir / f"screenshot-{i}.png"
+            out.write_bytes(png)
+            print(f"  Saved: {out} ({len(png):,} bytes)")
+
+    print(f"\nDone! {len(images)}/{len(markers)} markers replaced.")
+
+
 def main():
     parser = argparse.ArgumentParser(
         prog="lab-screenshot",
@@ -315,6 +530,22 @@ def main():
     run_p.add_argument("--agent", action="store_true", help="Use LLM agent to drive browser (reads guide steps, navigates autonomously)")
 
 
+    # --- record ---
+    rec_p = subparsers.add_parser("record", help="Record-then-extract: execute guide, record everything, select best frames via vision")
+    rec_p.add_argument("guide", help="Path to markdown guide")
+    rec_p.add_argument("--org", required=True, help="Okta org URL")
+    rec_p.add_argument("--username", help="Okta username (prompts if omitted)")
+    rec_p.add_argument("--password", help="Okta password (prompts if omitted)")
+    rec_p.add_argument("--totp-secret", help="TOTP secret for automated MFA")
+    rec_p.add_argument("-o", "--output", help="Output file (default: overwrite input)")
+    rec_p.add_argument("--recording-dir", default="/tmp/lab-screenshot-recording", help="Directory for recording frames")
+    rec_p.add_argument("--save-pngs", action="store_true", help="Save selected PNGs alongside output")
+    rec_p.add_argument("--width", type=int, default=1440, help="Viewport width")
+    rec_p.add_argument("--height", type=int, default=900, help="Viewport height")
+    rec_p.add_argument("--visible", action="store_true", help="Show browser window")
+    rec_p.add_argument("--profile-dir", help="Browser profile directory")
+    rec_p.add_argument("--setup", action="store_true", help="Open a visible browser first for manual login, then continue headlessly")
+
     args = parser.parse_args()
 
     if args.command == "login":
@@ -325,6 +556,8 @@ def main():
         cmd_check(args)
     elif args.command == "run":
         cmd_run(args)
+    elif args.command == "record":
+        cmd_record(args)
     else:
         parser.print_help()
 

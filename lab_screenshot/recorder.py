@@ -1,0 +1,364 @@
+#!/usr/bin/env python3
+"""
+recorder.py — Pass 1: Execute guide steps and record everything.
+
+The agent drives through the guide and captures a screenshot + metadata
+after every significant action. Produces a "gallery" of timestamped
+frames that Pass 2 uses to select the best match for each marker.
+
+Also records video of the entire session via Playwright's built-in
+video recording.
+"""
+
+import base64
+import json
+import os
+import shutil
+import sys
+import time
+from dataclasses import dataclass, field, asdict
+from pathlib import Path
+from typing import Optional
+
+
+@dataclass
+class Frame:
+    """A single captured frame from the recording session."""
+    index: int
+    timestamp: float          # seconds since session start
+    url: str
+    title: str
+    action: str               # what action preceded this frame
+    png_path: Optional[str] = None
+    base64_uri: Optional[str] = None
+
+
+@dataclass
+class Recording:
+    """Complete recording of a guide execution session."""
+    guide_path: str
+    admin_url: str
+    started_at: str
+    frames: list[Frame] = field(default_factory=list)
+    video_path: Optional[str] = None
+
+
+class GuideRecorder:
+    """
+    Pass 1: Execute guide steps and record a gallery of screenshots.
+
+    Uses the LLM agent to drive the browser, but captures a frame
+    after EVERY tool call (not just at markers). The LLM's job in
+    Pass 1 is purely navigation — no screenshot selection needed.
+    """
+
+    def __init__(
+        self,
+        page,
+        admin_url: str,
+        output_dir: str = "/tmp/lab-screenshot-recording",
+        verbose: bool = True,
+    ):
+        self.page = page
+        self.admin_url = admin_url.rstrip("/")
+        self.output_dir = Path(output_dir)
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+        self.verbose = verbose
+        self.recording = Recording(
+            guide_path="",
+            admin_url=admin_url,
+            started_at=time.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        )
+        self._start_time = time.time()
+
+    def _log(self, msg: str):
+        if self.verbose:
+            print(f"  [recorder] {msg}", file=sys.stderr)
+
+    def capture_frame(self, action: str) -> Frame:
+        """Capture current page state as a frame."""
+        idx = len(self.recording.frames)
+        elapsed = time.time() - self._start_time
+
+        # Take screenshot
+        png_path = str(self.output_dir / f"frame-{idx:03d}.png")
+        self.page.wait_for_timeout(300)
+        png_bytes = self.page.screenshot(type="png")
+        Path(png_path).write_bytes(png_bytes)
+
+        # Base64 for LLM vision
+        b64 = base64.b64encode(png_bytes).decode("ascii")
+        b64_uri = f"data:image/png;base64,{b64}"
+
+        frame = Frame(
+            index=idx,
+            timestamp=round(elapsed, 1),
+            url=self.page.url,
+            title=self.page.title(),
+            action=action,
+            png_path=png_path,
+            base64_uri=b64_uri,
+        )
+        self.recording.frames.append(frame)
+        self._log(f"frame {idx}: {action} → {frame.url[:60]} ({len(png_bytes):,}b)")
+        return frame
+
+    def record_guide(self, guide_text: str, max_iterations: int = 40) -> Recording:
+        """
+        Execute guide steps via LLM and capture frames throughout.
+        Returns the complete Recording with all frames.
+        """
+        from .guide import parse_markers
+
+        # Clean guide text (strip base64 images)
+        import re
+        clean_text = re.sub(r'\[image\d+\]:\s*<data:image[^>]*>', '', guide_text)
+        clean_text = re.sub(r'data:image/[^;]+;base64,[A-Za-z0-9+/=]+', '[existing-image]', clean_text)
+        lines = clean_text.split('\n')
+        clean_lines = [l if len(l) < 500 else l[:100] + '...[truncated]' for l in lines]
+        clean_text = '\n'.join(clean_lines)
+
+        self._log(f"Guide: {len(guide_text):,} → {len(clean_text):,} chars (cleaned)")
+
+        markers = parse_markers(guide_text)
+        self._log(f"Found {len(markers)} screenshot markers")
+
+        # Capture initial frame
+        self.capture_frame("session_start")
+
+        # Use LLM to drive navigation
+        try:
+            self._drive_with_llm(clean_text, markers, max_iterations)
+        except Exception as e:
+            self._log(f"LLM navigation error: {e}")
+
+        # Save recording metadata
+        meta_path = self.output_dir / "recording.json"
+        meta = {
+            "guide_path": self.recording.guide_path,
+            "admin_url": self.recording.admin_url,
+            "started_at": self.recording.started_at,
+            "total_frames": len(self.recording.frames),
+            "frames": [
+                {
+                    "index": f.index,
+                    "timestamp": f.timestamp,
+                    "url": f.url,
+                    "title": f.title,
+                    "action": f.action,
+                    "png_path": f.png_path,
+                }
+                for f in self.recording.frames
+            ],
+        }
+        meta_path.write_text(json.dumps(meta, indent=2))
+        self._log(f"Recording saved: {len(self.recording.frames)} frames → {self.output_dir}")
+
+        return self.recording
+
+    def _drive_with_llm(self, guide_text: str, markers, max_iterations: int):
+        """Use LLM to navigate through guide steps, capturing frames at each action."""
+        try:
+            from litellm import completion
+        except ImportError:
+            self._log("litellm not available — capturing initial frame only")
+            return
+
+        model_id = os.environ.get("LLM_MODEL", "claude-sonnet-4-6")
+
+        # Simpler tool set — just navigation, no screenshot decisions
+        tools = [
+            {
+                "name": "navigate",
+                "description": "Navigate to a URL path (appended to admin base) or full URL.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {"url": {"type": "string"}},
+                    "required": ["url"]
+                }
+            },
+            {
+                "name": "click",
+                "description": "Click an element. Use text selectors like 'text=Security', 'a:has-text(\"System Log\")', 'button:has-text(\"Save\")'.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "selector": {"type": "string"},
+                        "force": {"type": "boolean"}
+                    },
+                    "required": ["selector"]
+                }
+            },
+            {
+                "name": "fill",
+                "description": "Fill an input field.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "selector": {"type": "string"},
+                        "value": {"type": "string"}
+                    },
+                    "required": ["selector", "value"]
+                }
+            },
+            {
+                "name": "get_page_state",
+                "description": "Get current URL, title, and visible interactive elements.",
+                "input_schema": {"type": "object", "properties": {}}
+            },
+            {
+                "name": "wait",
+                "description": "Wait milliseconds or for a selector.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "milliseconds": {"type": "integer"},
+                        "selector": {"type": "string"}
+                    }
+                }
+            },
+            {
+                "name": "done",
+                "description": "Signal you've visited all the pages referenced in the guide.",
+                "input_schema": {"type": "object", "properties": {}}
+            },
+        ]
+
+        marker_pages = "\n".join(f"  [{m.index}] {m.description}" for m in markers)
+
+        system = f"""You are a browser navigation agent. Your job is to visit every page referenced in a lab guide.
+
+You are on the Okta Admin Console at {self.admin_url}. Navigate to each page mentioned in the guide steps. Your session is being recorded — a screenshot is captured after every action you take.
+
+You do NOT need to take screenshots yourself. Just navigate to the right pages.
+
+## Okta Admin Console URL Reference
+- Dashboard: /admin/dashboard
+- People: /admin/users
+- Groups: /admin/groups
+- Applications: /admin/apps/active
+- Global Session Policy: /admin/access/policies
+- Auth Policies (App Sign-In): /admin/authentication-policies/app-sign-in
+- Authenticators: /admin/access/multifactor
+- Networks: /admin/access/networks
+- HealthInsight: /admin/access/healthinsight
+- System Log: use the ORG domain URL (not admin), e.g. navigate to the full URL https://taskvantage.okta.com/report/system_log_2
+
+## Pages the guide references (need screenshots of these)
+{marker_pages}
+
+## Instructions
+1. Call get_page_state to see where you are
+2. Navigate to each page the guide mentions, in order
+3. For each referenced page, spend a moment on it (the recorder captures automatically)
+4. If you need to go deeper (click a specific policy, open a settings panel), do so
+5. Call done when you've visited all referenced pages
+
+Be efficient — navigate directly using URLs when possible, use sidebar clicks when URLs 404."""
+
+        messages = [{"role": "user", "content": f"Navigate through this guide:\n\n{guide_text}"}]
+        litellm_kwargs = {"model": model_id, "messages": messages, "tools": tools, "max_tokens": 4096}
+        if os.environ.get("LITELLM_API_BASE"):
+            litellm_kwargs["api_base"] = os.environ["LITELLM_API_BASE"]
+            litellm_kwargs["api_key"] = os.environ.get("LITELLM_API_KEY", "")
+
+        for iteration in range(max_iterations):
+            self._log(f"nav iteration {iteration + 1}/{max_iterations}")
+
+            try:
+                response = completion(**litellm_kwargs, system=system)
+            except Exception as e:
+                self._log(f"LLM error: {e}")
+                break
+
+            message = response.choices[0].message
+            messages.append({"role": "assistant", "content": message.content, "tool_calls": message.tool_calls})
+
+            if not message.tool_calls:
+                break
+
+            tool_results = []
+            is_done = False
+
+            for tc in message.tool_calls:
+                name = tc.function.name
+                try:
+                    args = json.loads(tc.function.arguments)
+                except json.JSONDecodeError:
+                    args = {}
+
+                if name == "done":
+                    is_done = True
+                    result = "Navigation complete."
+                elif name == "navigate":
+                    url = args.get("url", "")
+                    if url.startswith("/"):
+                        url = f"{self.admin_url}{url}"
+                    try:
+                        self.page.goto(url, wait_until="networkidle", timeout=15000)
+                        self.page.wait_for_timeout(1500)
+                        result = f"Navigated to {self.page.url}"
+                    except Exception as e:
+                        result = f"Navigate error: {e}"
+                    self.capture_frame(f"navigate:{url[:60]}")
+                elif name == "click":
+                    selector = args.get("selector", "")
+                    force = args.get("force", False)
+                    try:
+                        self.page.locator(selector).first.click(force=force, timeout=8000)
+                        self.page.wait_for_timeout(1500)
+                        result = f"Clicked '{selector}'. URL: {self.page.url}"
+                    except Exception as e:
+                        result = f"Click failed: {e}"
+                    self.capture_frame(f"click:{selector[:40]}")
+                elif name == "fill":
+                    selector = args.get("selector", "")
+                    value = args.get("value", "")
+                    try:
+                        self.page.fill(selector, value, timeout=8000)
+                        result = f"Filled '{selector}'"
+                    except Exception as e:
+                        result = f"Fill error: {e}"
+                    self.capture_frame(f"fill:{selector[:40]}")
+                elif name == "get_page_state":
+                    elements = self.page.evaluate("""() => {
+                        return Array.from(document.querySelectorAll('a, button, input, [role=button], [role=menuitem], [role=tab], [data-se]'))
+                            .filter(el => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 && r.top < window.innerHeight; })
+                            .slice(0, 60)
+                            .map(el => {
+                                const t = el.tagName.toLowerCase();
+                                const text = (el.textContent||'').trim().replace(/\\s+/g,' ').substring(0,50);
+                                const href = el.getAttribute('href')||'';
+                                const se = el.getAttribute('data-se')||'';
+                                let d = t;
+                                if (se) d += `[data-se=${se}]`;
+                                if (href && href!=='#') d += ` href="${href.substring(0,60)}"`;
+                                if (text) d += ` "${text}"`;
+                                return d;
+                            });
+                    }""")
+                    result = f"URL: {self.page.url}\nTitle: {self.page.title()}\nElements ({len(elements)}):\n" + "\n".join(f"  - {e}" for e in elements)
+                elif name == "wait":
+                    ms = args.get("milliseconds", 2000)
+                    sel = args.get("selector")
+                    if sel:
+                        try:
+                            self.page.wait_for_selector(sel, timeout=ms)
+                            result = f"Selector '{sel}' appeared"
+                        except:
+                            result = f"Selector '{sel}' not found in {ms}ms"
+                    else:
+                        self.page.wait_for_timeout(ms)
+                        result = f"Waited {ms}ms"
+                else:
+                    result = f"Unknown tool: {name}"
+
+                tool_results.append({"role": "tool", "tool_call_id": tc.id, "content": result})
+
+            messages.extend(tool_results)
+            litellm_kwargs["messages"] = messages
+
+            if is_done:
+                break
+
+        self._log(f"Navigation complete: {len(self.recording.frames)} frames captured")
