@@ -337,14 +337,23 @@ def cmd_record(args):
             except Exception:
                 pass
 
+            # Capture the URL the user was on when they closed
+            start_url = org
+            try:
+                for pg in context.pages:
+                    if pg.url and pg.url != "about:blank" and not pg.url.startswith("chrome"):
+                        start_url = pg.url
+                        break
+            except Exception:
+                pass
+
             context.close()
 
         print(f"  Session saved to: {profile}")
+        print(f"  Starting from: {start_url}")
         print(f"  Continuing headlessly...\n")
 
-        # Determine admin URL from what the user landed on
-        # Default: use the org URL as-is (lab environments may not follow standard patterns)
-        admin_url = org
+        admin_url = start_url
 
     else:
         # --- Headless authentication via authn API ---

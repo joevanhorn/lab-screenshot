@@ -227,9 +227,19 @@ def _run_pipeline(org_url: str, use_chrome: bool):
             except Exception:
                 pass
 
+            # Capture the URL the user was on when they closed the browser
+            start_url = org_url
+            try:
+                for p in context.pages:
+                    if p.url and p.url != "about:blank" and not p.url.startswith("chrome"):
+                        start_url = p.url
+                        break
+            except Exception:
+                pass
+
             context.close()
 
-        log_progress("Browser closed — session saved.")
+        log_progress(f"Browser closed — session saved. Starting from: {start_url}")
 
         # ---- Pass 1: Record ----
         _current_job["status"] = "recording"
@@ -244,6 +254,14 @@ def _run_pipeline(org_url: str, use_chrome: bool):
                 **chrome_kwargs,
             )
             page = context.pages[0] if context.pages else context.new_page()
+
+            # Navigate to where the user left off
+            log_progress(f"Navigating to: {start_url}")
+            try:
+                page.goto(start_url, wait_until="networkidle", timeout=30000)
+                page.wait_for_timeout(2000)
+            except Exception as e:
+                log_progress(f"Navigation warning: {e}", "error")
 
             # Dismiss popups
             try:
