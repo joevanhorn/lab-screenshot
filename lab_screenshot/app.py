@@ -439,28 +439,18 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; b
         </div>
         <div class="form-row">
             <div class="form-group">
-                <label>LLM Provider</label>
-                <select id="llm-provider" onchange="toggleProviderFields()">
-                    <option value="litellm">LiteLLM Proxy</option>
-                    <option value="anthropic">Anthropic API</option>
-                    <option value="bedrock">AWS Bedrock</option>
+                <label>AI Model</label>
+                <select id="model">
+                    <option value="claude-sonnet-4-6" selected>Claude Sonnet 4.6 (Recommended)</option>
+                    <option value="claude-opus-4-6">Claude Opus 4.6</option>
+                    <option value="claude-sonnet-4-5">Claude Sonnet 4.5</option>
+                    <option value="claude-haiku-4-5">Claude Haiku 4.5 (Fastest)</option>
                 </select>
             </div>
-            <div class="form-group" id="api-key-group">
-                <label>API Key</label>
-                <input type="password" id="api-key" value="sk-m4Lc0YlvjR0cjmDTR1qrJw">
-            </div>
         </div>
-        <div class="form-row" id="api-base-row">
-            <div class="form-group">
-                <label>LiteLLM Base URL</label>
-                <input type="text" id="api-base" value="https://llm.atko.ai">
-            </div>
-            <div class="form-group">
-                <label>Model (optional)</label>
-                <input type="text" id="model" value="claude-sonnet-4-6">
-            </div>
-        </div>
+        <input type="hidden" id="llm-provider" value="litellm">
+        <input type="hidden" id="api-key" value="sk-m4Lc0YlvjR0cjmDTR1qrJw">
+        <input type="hidden" id="api-base" value="https://llm.atko.ai">
         <div class="checkbox-row">
             <input type="checkbox" id="use-chrome">
             <label for="use-chrome">Use system Chrome (avoids corporate endpoint blocks)</label>
@@ -544,9 +534,7 @@ async function handleUpload(input) {
 }
 
 function toggleProviderFields() {
-    const prov = document.getElementById('llm-provider').value;
-    document.getElementById('api-base-row').style.display = prov === 'litellm' ? 'flex' : 'none';
-    document.getElementById('api-key-group').style.display = prov === 'bedrock' ? 'none' : 'block';
+    // Provider fields are hidden — using built-in LiteLLM proxy
 }
 
 async function startRecording() {
@@ -561,28 +549,6 @@ async function startRecording() {
         return;
     }
     document.getElementById('org-url').style.borderColor = '';
-
-    const provider = document.getElementById('llm-provider').value;
-    if (provider !== 'bedrock') {
-        const apiKey = document.getElementById('api-key').value.trim();
-        if (!apiKey) {
-            document.getElementById('api-key').style.borderColor = '#ef4444';
-            document.getElementById('api-key').focus();
-            alert('Please enter an API Key');
-            return;
-        }
-        document.getElementById('api-key').style.borderColor = '';
-    }
-    if (provider === 'litellm') {
-        const apiBase = document.getElementById('api-base').value.trim();
-        if (!apiBase) {
-            document.getElementById('api-base').style.borderColor = '#ef4444';
-            document.getElementById('api-base').focus();
-            alert('Please enter a LiteLLM Base URL');
-            return;
-        }
-        document.getElementById('api-base').style.borderColor = '';
-    }
 
     document.getElementById('card-progress').style.display = 'block';
     document.getElementById('card-result').style.display = 'none';
