@@ -123,17 +123,10 @@ async def start_recording(
     if not _current_job["guide_path"]:
         return JSONResponse({"error": "Upload a guide first"}, status_code=400)
 
-    # Set LLM environment
-    if llm_provider == "litellm" and api_base:
-        os.environ["LITELLM_API_BASE"] = api_base
-        os.environ["LITELLM_API_KEY"] = api_key
-    elif llm_provider == "anthropic" and api_key:
-        os.environ["ANTHROPIC_API_KEY"] = api_key
-    elif llm_provider == "bedrock":
-        pass  # Uses IAM credentials
-
-    if model:
-        os.environ["LLM_MODEL"] = model
+    # Set LLM environment — always use the shared LiteLLM proxy
+    os.environ["LITELLM_API_BASE"] = api_base or "https://llm.atko.ai"
+    os.environ["LITELLM_API_KEY"] = api_key or "sk-m4Lc0YlvjR0cjmDTR1qrJw"
+    os.environ["LLM_MODEL"] = model or "claude-sonnet-4-6"
 
     # Reset state
     _current_job["status"] = "setup"
@@ -455,17 +448,17 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; b
             </div>
             <div class="form-group" id="api-key-group">
                 <label>API Key</label>
-                <input type="password" id="api-key" placeholder="sk-...">
+                <input type="password" id="api-key" value="sk-m4Lc0YlvjR0cjmDTR1qrJw">
             </div>
         </div>
         <div class="form-row" id="api-base-row">
             <div class="form-group">
                 <label>LiteLLM Base URL</label>
-                <input type="text" id="api-base" placeholder="https://llm.yourcompany.com">
+                <input type="text" id="api-base" value="https://llm.atko.ai">
             </div>
             <div class="form-group">
                 <label>Model (optional)</label>
-                <input type="text" id="model" placeholder="claude-sonnet-4-6">
+                <input type="text" id="model" value="claude-sonnet-4-6">
             </div>
         </div>
         <div class="checkbox-row">
