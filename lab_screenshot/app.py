@@ -541,6 +541,38 @@ function toggleProviderFields() {
 async function startRecording() {
     if (!guideUploaded) return;
 
+    // Validate required fields
+    const orgUrl = document.getElementById('org-url').value.trim();
+    if (!orgUrl) {
+        document.getElementById('org-url').style.borderColor = '#ef4444';
+        document.getElementById('org-url').focus();
+        alert('Please enter a Starting URL');
+        return;
+    }
+    document.getElementById('org-url').style.borderColor = '';
+
+    const provider = document.getElementById('llm-provider').value;
+    if (provider !== 'bedrock') {
+        const apiKey = document.getElementById('api-key').value.trim();
+        if (!apiKey) {
+            document.getElementById('api-key').style.borderColor = '#ef4444';
+            document.getElementById('api-key').focus();
+            alert('Please enter an API Key');
+            return;
+        }
+        document.getElementById('api-key').style.borderColor = '';
+    }
+    if (provider === 'litellm') {
+        const apiBase = document.getElementById('api-base').value.trim();
+        if (!apiBase) {
+            document.getElementById('api-base').style.borderColor = '#ef4444';
+            document.getElementById('api-base').focus();
+            alert('Please enter a LiteLLM Base URL');
+            return;
+        }
+        document.getElementById('api-base').style.borderColor = '';
+    }
+
     document.getElementById('card-progress').style.display = 'block';
     document.getElementById('card-result').style.display = 'none';
     document.getElementById('log').innerHTML = '';
