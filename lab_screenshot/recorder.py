@@ -170,16 +170,16 @@ class GuideRecorder:
         tools = [
             {
                 "name": "navigate",
-                "description": "Navigate to a URL path (appended to admin base) or full URL.",
+                "description": "Navigate to a full URL. Only use this when you know the exact URL — prefer clicking links and buttons instead.",
                 "input_schema": {
                     "type": "object",
-                    "properties": {"url": {"type": "string"}},
+                    "properties": {"url": {"type": "string", "description": "Full URL to navigate to"}},
                     "required": ["url"]
                 }
             },
             {
                 "name": "click",
-                "description": "Click an element. Use text selectors like 'text=Security', 'a:has-text(\"System Log\")', 'button:has-text(\"Save\")'.",
+                "description": "Click an element on the page. Use text-based selectors for best results. Examples: 'text=Security', 'text=System Log', 'a:has-text(\"Reports\")', 'button:has-text(\"Save\")', 'button:has-text(\"Launch\")', '[data-se=\"save\"]'. For navigation menus, click the section header first, wait, then click sub-items.",
                 "input_schema": {
                     "type": "object",
                     "properties": {
@@ -207,6 +207,16 @@ class GuideRecorder:
                 "input_schema": {"type": "object", "properties": {}}
             },
             {
+                "name": "get_page_text",
+                "description": "Get the visible text content of the current page or a specific section. Useful for reading instructions, finding specific text, or verifying page content.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "selector": {"type": "string", "description": "Optional CSS selector to scope text. Omit for full page."}
+                    }
+                }
+            },
+            {
                 "name": "wait",
                 "description": "Wait milliseconds or for a selector.",
                 "input_schema": {
@@ -226,35 +236,39 @@ class GuideRecorder:
 
         marker_pages = "\n".join(f"  [{m.index}] {m.description}" for m in markers)
 
-        system = f"""You are a browser navigation agent. Your job is to visit every page referenced in a lab guide.
+        system = f"""You are a browser automation agent. Your job is to follow the step-by-step instructions in a lab guide, executing each action exactly as described.
 
-You are on the Okta Admin Console at {self.admin_url}. Navigate to each page mentioned in the guide steps. Your session is being recorded — a screenshot is captured after every action you take.
+You are controlling a real browser. A human user has already authenticated and set up the session for you. Your starting URL is whatever page the browser is currently on.
 
-You do NOT need to take screenshots yourself. Just navigate to the right pages.
+A screenshot is captured automatically after every action you take. You do NOT need to take screenshots — just follow the instructions.
 
-## Okta Admin Console URL Reference
-- Dashboard: /admin/dashboard
-- People: /admin/users
-- Groups: /admin/groups
-- Applications: /admin/apps/active
-- Global Session Policy: /admin/access/policies
-- Auth Policies (App Sign-In): /admin/authentication-policies/app-sign-in
-- Authenticators: /admin/access/multifactor
-- Networks: /admin/access/networks
-- HealthInsight: /admin/access/healthinsight
-- System Log: use the ORG domain URL (not admin), e.g. navigate to the full URL https://taskvantage.okta.com/report/system_log_2
+## Your approach
+1. First, call get_page_state to see where you are and what's on screen
+2. Read the guide instructions carefully and execute them IN ORDER
+3. For each step:
+   - Read what the step says to do (click, navigate, fill in, select, etc.)
+   - Look at the current page state to find the right element
+   - Execute the action using the appropriate tool
+   - Call get_page_state after each action to verify it worked
+4. If a step says "navigate to X" or "go to X", look for a link or menu item matching X on the current page and click it — don't guess URLs
+5. If a step says "click X", find the element with matching text and click it
+6. If a step says "fill in X with Y", find the input field and fill it
+7. If something doesn't work, try alternative selectors or approaches
+8. Call done when you've completed all the steps
 
-## Pages the guide references (need screenshots of these)
+## Key rules
+- Follow the guide instructions literally — do what they say, in the order they say it
+- Use click navigation (clicking links, buttons, menu items) rather than typing URLs directly
+- When looking for elements, use text-based selectors: 'text=Security', 'a:has-text("System Log")', 'button:has-text("Save")'
+- If the page has a sidebar or navigation menu, use it to navigate
+- If a button opens a new panel, dialog, or section, wait for it to load before proceeding
+- Some steps may refer to actions you can't perform (external tools, mobile devices, etc.) — skip those and move to the next step you CAN do in the browser
+- The guide may have [SCREENSHOT: ...] markers — these are just placeholders, ignore them and keep following the instructions
+
+## Screenshots needed at these points in the guide
 {marker_pages}
 
-## Instructions
-1. Call get_page_state to see where you are
-2. Navigate to each page the guide mentions, in order
-3. For each referenced page, spend a moment on it (the recorder captures automatically)
-4. If you need to go deeper (click a specific policy, open a settings panel), do so
-5. Call done when you've visited all referenced pages
-
-Be efficient — navigate directly using URLs when possible, use sidebar clicks when URLs 404."""
+Make sure you reach the pages/views described above during your navigation. The recording system captures a frame at every action, so just being on the right page is sufficient."""
 
         messages = [{"role": "user", "content": f"Navigate through this guide:\n\n{guide_text}"}]
         litellm_kwargs = {"model": model_id, "messages": messages, "tools": tools, "max_tokens": 4096}
@@ -292,8 +306,6 @@ Be efficient — navigate directly using URLs when possible, use sidebar clicks 
                     result = "Navigation complete."
                 elif name == "navigate":
                     url = args.get("url", "")
-                    if url.startswith("/"):
-                        url = f"{self.admin_url}{url}"
                     try:
                         self.page.goto(url, wait_until="networkidle", timeout=15000)
                         self.page.wait_for_timeout(1500)
@@ -338,6 +350,18 @@ Be efficient — navigate directly using URLs when possible, use sidebar clicks 
                             });
                     }""")
                     result = f"URL: {self.page.url}\nTitle: {self.page.title()}\nElements ({len(elements)}):\n" + "\n".join(f"  - {e}" for e in elements)
+                elif name == "get_page_text":
+                    selector = args.get("selector")
+                    try:
+                        if selector:
+                            text_content = self.page.locator(selector).first.inner_text(timeout=5000)
+                        else:
+                            text_content = self.page.inner_text("body")
+                        if len(text_content) > 4000:
+                            text_content = text_content[:4000] + "\n... (truncated)"
+                        result = text_content
+                    except Exception as e:
+                        result = f"Error getting text: {e}"
                 elif name == "wait":
                     ms = args.get("milliseconds", 2000)
                     sel = args.get("selector")
