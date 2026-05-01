@@ -286,6 +286,7 @@ def cmd_record(args):
         print(f"  [{m.index}] Line {m.line}: {m.description}")
 
     use_setup = getattr(args, "setup", False)
+    no_auth = getattr(args, "no_auth", False)
 
     # --- Resolve org URL ---
     org = args.org.rstrip("/")
@@ -299,7 +300,14 @@ def cmd_record(args):
     use_chrome = getattr(args, "chrome", False)
     chrome_kwargs = {"channel": "chrome"} if use_chrome else {}
 
-    if use_setup:
+    if no_auth:
+        # --- No auth: navigate directly ---
+        print(f"No-auth mode — will navigate to {org}")
+        admin_url = org
+        shutil.rmtree(profile, ignore_errors=True)
+        os.makedirs(profile, exist_ok=True)
+
+    elif use_setup:
         # --- Interactive setup: user authenticates in a visible browser ---
         print("Opening browser for manual authentication...")
         if use_chrome:
@@ -420,9 +428,10 @@ def cmd_record(args):
         )
         page = context.pages[0] if context.pages else context.new_page()
 
-        # If we came from headless auth, navigate to the start page
+        # Navigate to start page if not coming from setup (setup leaves the browser where the user was)
         if not use_setup:
-            page.goto(f"{admin_url}/admin/dashboard", wait_until="networkidle", timeout=30000)
+            start_url = admin_url if no_auth else f"{admin_url}/admin/dashboard"
+            page.goto(start_url, wait_until="networkidle", timeout=30000)
             page.wait_for_timeout(2000)
 
         # Dismiss any popups
@@ -552,6 +561,7 @@ def main():
     rec_p.add_argument("--visible", action="store_true", help="Show browser window")
     rec_p.add_argument("--profile-dir", help="Browser profile directory")
     rec_p.add_argument("--setup", action="store_true", help="Open a visible browser first for manual login, then continue headlessly")
+    rec_p.add_argument("--no-auth", action="store_true", help="Skip authentication — use for public sites or pre-authenticated sessions")
     rec_p.add_argument("--chrome", action="store_true", help="Use system Chrome instead of Playwright's Chromium (avoids corporate endpoint blocks)")
 
     args = parser.parse_args()
