@@ -296,9 +296,14 @@ def cmd_record(args):
 
     print(f"\n=== Pass 1: Record ===")
 
+    use_chrome = getattr(args, "chrome", False)
+    chrome_kwargs = {"channel": "chrome"} if use_chrome else {}
+
     if use_setup:
         # --- Interactive setup: user authenticates in a visible browser ---
         print("Opening browser for manual authentication...")
+        if use_chrome:
+            print("  Using system Chrome (--chrome flag)")
         print(f"  Navigate to: {org}")
         print(f"  Log in, reach the page you want the bot to start from,")
         print(f"  then CLOSE the browser window to continue.")
@@ -313,6 +318,7 @@ def cmd_record(args):
                 headless=False,
                 viewport={"width": args.width, "height": args.height},
                 args=["--disable-blink-features=AutomationControlled"],
+                **chrome_kwargs,
             )
             page = context.pages[0] if context.pages else context.new_page()
             page.goto(org, wait_until="networkidle", timeout=60000)
@@ -410,6 +416,7 @@ def cmd_record(args):
             headless=not args.visible,
             viewport={"width": args.width, "height": args.height},
             args=["--disable-blink-features=AutomationControlled"],
+            **chrome_kwargs,
         )
         page = context.pages[0] if context.pages else context.new_page()
 
@@ -545,6 +552,7 @@ def main():
     rec_p.add_argument("--visible", action="store_true", help="Show browser window")
     rec_p.add_argument("--profile-dir", help="Browser profile directory")
     rec_p.add_argument("--setup", action="store_true", help="Open a visible browser first for manual login, then continue headlessly")
+    rec_p.add_argument("--chrome", action="store_true", help="Use system Chrome instead of Playwright's Chromium (avoids corporate endpoint blocks)")
 
     args = parser.parse_args()
 
