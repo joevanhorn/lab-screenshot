@@ -166,7 +166,7 @@ class GuideRecorder:
             self._log("litellm not available — capturing initial frame only")
             return
 
-        model_id = os.environ.get("LLM_MODEL", "claude-4-5-sonnet")
+        model_id = os.environ.get("LLM_MODEL", "bedrock/us.anthropic.claude-sonnet-4-6")
 
         # Simpler tool set — just navigation, no screenshot decisions
         tools = [
