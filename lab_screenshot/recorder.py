@@ -193,12 +193,12 @@ class GuideRecorder:
             },
             {
                 "name": "fill",
-                "description": "Fill an input field.",
+                "description": "Fill an input field with text. IMPORTANT: To target the correct field, use precise selectors based on the field's name, id, or label. Examples: 'input[name=\"org_name\"]', 'input#org-name', '#session-timeout'. Always call get_page_state first to see available input fields and their name/id attributes, then use those for targeting.",
                 "input_schema": {
                     "type": "object",
                     "properties": {
-                        "selector": {"type": "string"},
-                        "value": {"type": "string"}
+                        "selector": {"type": "string", "description": "Playwright selector — use name or id attributes for precision: input[name=\"field_name\"], input#field-id"},
+                        "value": {"type": "string", "description": "Text to type into the field"}
                     },
                     "required": ["selector", "value"]
                 }
@@ -280,7 +280,7 @@ A screenshot is captured automatically after every action you take. You do NOT n
    - Call get_page_state after each action to verify it worked
 4. If a step says "navigate to X" or "go to X", look for a link or menu item matching X on the current page and click it — don't guess URLs
 5. If a step says "click X", find the element with matching text and click it
-6. If a step says "fill in X with Y", find the input field and fill it
+6. If a step says "fill in X with Y", FIRST call get_page_state to see all input fields with their name/id attributes, THEN use fill with a precise selector like input#field-id or input[name="field_name"]. Fill each field individually with its own fill call.
 7. If something doesn't work, try alternative selectors or approaches
 8. Call done when you've completed all the steps
 
@@ -382,22 +382,41 @@ Make sure you reach the pages/views described above during your navigation. The 
                     self.capture_frame(f"fill:{selector[:40]}")
                 elif name == "get_page_state":
                     elements = self.page.evaluate("""() => {
-                        return Array.from(document.querySelectorAll('a, button, input, [role=button], [role=menuitem], [role=tab], [data-se]'))
+                        return Array.from(document.querySelectorAll('a, button, input, select, textarea, [role=button], [role=menuitem], [role=tab], [data-se]'))
                             .filter(el => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 && r.top < window.innerHeight; })
-                            .slice(0, 60)
+                            .slice(0, 80)
                             .map(el => {
                                 const t = el.tagName.toLowerCase();
                                 const text = (el.textContent||'').trim().replace(/\\s+/g,' ').substring(0,50);
                                 const href = el.getAttribute('href')||'';
                                 const se = el.getAttribute('data-se')||'';
+                                const name = el.getAttribute('name')||'';
+                                const id = el.getAttribute('id')||'';
+                                const type = el.getAttribute('type')||'';
+                                const placeholder = el.getAttribute('placeholder')||'';
+                                const value = el.value||'';
+                                // Find associated label
+                                let label = '';
+                                if (id) {
+                                    const lbl = document.querySelector('label[for="'+id+'"]');
+                                    if (lbl) label = lbl.textContent.trim().substring(0,40);
+                                }
                                 let d = t;
-                                if (se) d += `[data-se=${se}]`;
-                                if (href && href!=='#') d += ` href="${href.substring(0,60)}"`;
-                                if (text) d += ` "${text}"`;
+                                if (type) d += '[type='+type+']';
+                                if (id) d += '#'+id;
+                                if (name) d += '[name='+name+']';
+                                if (se) d += '[data-se='+se+']';
+                                if (label) d += ' label="'+label+'"';
+                                if (placeholder) d += ' placeholder="'+placeholder+'"';
+                                if (t === 'input' || t === 'textarea' || t === 'select') {
+                                    if (value) d += ' value="'+value.substring(0,30)+'"';
+                                }
+                                if (href && href!=='#') d += ' href="'+href.substring(0,60)+'"';
+                                if (text && t !== 'input' && t !== 'textarea') d += ' "'+text+'"';
                                 return d;
                             });
                     }""")
-                    result = f"URL: {self.page.url}\nTitle: {self.page.title()}\nElements ({len(elements)}):\n" + "\n".join(f"  - {e}" for e in elements)
+                    result = f"URL: {self.page.url}\nTitle: {self.page.title()}\n\nInteractive elements ({len(elements)}):\n" + "\n".join(f"  - {e}" for e in elements)
                 elif name == "get_page_text":
                     selector = args.get("selector")
                     try:
