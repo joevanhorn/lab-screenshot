@@ -144,6 +144,15 @@ async def start_recording(
     return JSONResponse({"status": "started"})
 
 
+@app.post("/api/handoff")
+async def handoff_to_bot():
+    """Signal that the user has finished authenticating and the bot should take over."""
+    if _current_job["status"] != "setup":
+        return JSONResponse({"error": "Not in setup phase"}, status_code=400)
+    _current_job["status"] = "recording"
+    return JSONResponse({"status": "handoff"})
+
+
 @app.post("/api/stop")
 async def stop_recording():
     """Stop the current job."""
@@ -195,8 +204,8 @@ def _run_pipeline(org_url: str, use_chrome: bool):
     try:
         # ---- Setup: open browser for manual auth ----
         _current_job["status"] = "setup"
-        log_progress("Opening browser for authentication...")
-        log_progress("Log in, navigate to the starting page, then CLOSE the browser window.")
+        log_progress("Opening browser — authenticate in all platforms you need.")
+        log_progress("When ready, click 'Hand Off to Bot' in the app UI.")
 
         profile = os.path.expanduser("~/.okta-lab-screenshots/app-profile")
         shutil.rmtree(profile, ignore_errors=True)
@@ -215,54 +224,30 @@ def _run_pipeline(org_url: str, use_chrome: bool):
             page = context.pages[0] if context.pages else context.new_page()
             page.goto(org_url, wait_until="networkidle", timeout=60000)
 
-            try:
-                page.wait_for_event("close", timeout=600000)
-            except Exception:
-                pass
+            # Wait for user to click "Hand Off to Bot" in the UI
+            log_progress("Waiting for handoff signal...")
+            while _current_job.get("status") == "setup":
+                time.sleep(0.5)
 
-            # Capture the URL the user was on when they closed the browser
-            start_url = org_url
-            try:
-                for p in context.pages:
-                    if p.url and p.url != "about:blank" and not p.url.startswith("chrome"):
-                        start_url = p.url
+            if _current_job.get("status") == "idle":
+                # User cancelled
+                context.close()
+                return
+
+            # ---- Pass 1: Record (same browser, same session) ----
+            log_progress("Bot taking over — starting recording pass...")
+            log_progress(f"Current page: {page.url}")
+
+            # Use whichever page/tab is currently active
+            # (user may have opened multiple tabs during auth)
+            active_pages = context.pages
+            if active_pages:
+                page = active_pages[-1]  # Use the most recently opened tab
+                for ap in active_pages:
+                    if "/admin/" in ap.url or "/lab/" in ap.url:
+                        page = ap
                         break
-            except Exception:
-                pass
-
-            context.close()
-
-        log_progress(f"Browser closed — session saved. Starting from: {start_url}")
-
-        # ---- Pass 1: Record ----
-        _current_job["status"] = "recording"
-        log_progress("Pass 1: Recording — agent is navigating...")
-
-        with sync_playwright() as p:
-            context = p.chromium.launch_persistent_context(
-                user_data_dir=profile,
-                headless=True,
-                viewport={"width": 1440, "height": 900},
-                args=["--disable-blink-features=AutomationControlled"],
-                **chrome_kwargs,
-            )
-            page = context.pages[0] if context.pages else context.new_page()
-
-            # Navigate to where the user left off
-            log_progress(f"Navigating to: {start_url}")
-            try:
-                page.goto(start_url, wait_until="networkidle", timeout=30000)
-                page.wait_for_timeout(2000)
-            except Exception as e:
-                log_progress(f"Navigation warning: {e}", "error")
-
-            # Dismiss popups
-            try:
-                cb = page.locator('button:has-text("Close"), [aria-label="Close"]').first
-                if cb.is_visible(timeout=2000):
-                    cb.click()
-            except Exception:
-                pass
+            log_progress(f"Active tab: {page.url} ({len(active_pages)} tabs open)")
 
             recorder = GuideRecorder(
                 page=page,
@@ -460,6 +445,20 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; b
         </div>
     </div>
 
+    <!-- Handoff -->
+    <div class="card" id="card-handoff" style="display:none">
+        <h2>Authenticate & Prepare</h2>
+        <p style="color:#475569;font-size:14px;margin-bottom:12px;">A browser window has opened. Complete these steps:</p>
+        <ol style="color:#475569;font-size:14px;line-height:2;padding-left:20px;margin-bottom:16px;">
+            <li>Log into the lab environment</li>
+            <li>Click <strong>Launch</strong> on any platform buttons (Okta, virtual desktops, etc.)</li>
+            <li>Complete any MFA prompts</li>
+            <li>Navigate to where you want the bot to start working</li>
+        </ol>
+        <p style="color:#64748b;font-size:13px;margin-bottom:16px;">When you're ready, click the button below. The bot will take over the browser and start following the guide instructions.</p>
+        <button class="btn btn-primary" onclick="handOffToBot()" style="background:#22c55e;font-size:16px;padding:12px 32px;">Hand Off to Bot</button>
+    </div>
+
     <!-- Progress -->
     <div class="card" id="card-progress" style="display:none">
         <h2>Progress</h2>
@@ -556,7 +555,8 @@ async function startRecording() {
     document.getElementById('start-btn').disabled = true;
 
     setStep('auth');
-    document.getElementById('status-text').textContent = 'Opening browser for authentication...';
+    document.getElementById('status-text').textContent = 'Opening browser...';
+    document.getElementById('card-handoff').style.display = 'block';
 
     const form = new FormData();
     form.append('org_url', document.getElementById('org-url').value);
@@ -572,6 +572,16 @@ async function startRecording() {
     pollStatus();
 }
 
+async function handOffToBot() {
+    const resp = await fetch('/api/handoff', { method: 'POST' });
+    if (resp.ok) {
+        document.getElementById('card-handoff').style.display = 'none';
+        document.getElementById('card-progress').style.display = 'block';
+        document.getElementById('status-text').textContent = 'Bot is recording...';
+        setStep('record');
+    }
+}
+
 async function pollStatus() {
     const resp = await fetch('/api/status');
     const data = await resp.json();
@@ -580,8 +590,11 @@ async function pollStatus() {
 
     if (data.status === 'setup') {
         setStep('auth');
+        document.getElementById('card-handoff').style.display = 'block';
     } else if (data.status === 'recording') {
         setStep('record');
+        document.getElementById('card-handoff').style.display = 'none';
+        document.getElementById('card-progress').style.display = 'block';
     } else if (data.status === 'selecting') {
         setStep('record');
         document.getElementById('status-text').textContent = 'Selecting best frames...';
@@ -615,6 +628,7 @@ function resetApp() {
     document.getElementById('upload-zone').classList.remove('has-file');
     document.getElementById('upload-label').textContent = 'Click to upload a markdown guide with [SCREENSHOT: ...] markers';
     document.getElementById('markers-list').style.display = 'none';
+    document.getElementById('card-handoff').style.display = 'none';
     document.getElementById('card-progress').style.display = 'none';
     document.getElementById('card-result').style.display = 'none';
     document.getElementById('start-btn').disabled = true;
