@@ -563,6 +563,10 @@ def main():
     rec_p.add_argument("--profile-dir", help="Browser profile directory")
     rec_p.add_argument("--setup", action="store_true", help="Open a visible browser first for manual login, then continue headlessly")
     rec_p.add_argument("--no-auth", action="store_true", help="Skip authentication — use for public sites or pre-authenticated sessions")
+
+    # --- app ---
+    app_p = subparsers.add_parser("app", help="Launch desktop app with web UI")
+    app_p.add_argument("--port", type=int, default=8384, help="Port for the local web server")
     rec_p.add_argument("--chrome", action="store_true", help="Use system Chrome instead of Playwright's Chromium (avoids corporate endpoint blocks)")
 
     args = parser.parse_args()
@@ -577,6 +581,9 @@ def main():
         cmd_run(args)
     elif args.command == "record":
         cmd_record(args)
+    elif args.command == "app":
+        from .app import run_app
+        run_app(port=args.port)
     else:
         parser.print_help()
 
