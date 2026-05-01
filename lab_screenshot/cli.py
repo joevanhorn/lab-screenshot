@@ -446,6 +446,7 @@ def cmd_record(args):
 
         recorder = GuideRecorder(
             page=page,
+            context=context,
             admin_url=admin_url,
             output_dir=args.recording_dir,
         )

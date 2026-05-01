@@ -55,11 +55,13 @@ class GuideRecorder:
     def __init__(
         self,
         page,
+        context,  # Playwright BrowserContext — needed for multi-tab support
         admin_url: str,
         output_dir: str = "/tmp/lab-screenshot-recording",
         verbose: bool = True,
     ):
         self.page = page
+        self.context = context
         self.admin_url = admin_url.rstrip("/")
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -228,6 +230,32 @@ class GuideRecorder:
                 }
             },
             {
+                "name": "list_tabs",
+                "description": "List all open browser tabs with their index, URL, and title. Use this to see what tabs are available after clicking a link that opened a new tab.",
+                "input_schema": {"type": "object", "properties": {}}
+            },
+            {
+                "name": "switch_tab",
+                "description": "Switch to a different browser tab by index number. After switching, call get_page_state to see the new tab's content. Use list_tabs first to see available tabs.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "tab_index": {"type": "integer", "description": "0-based index of the tab to switch to (from list_tabs output)"}
+                    },
+                    "required": ["tab_index"]
+                }
+            },
+            {
+                "name": "wait_for_new_tab",
+                "description": "Wait for a new tab to open (e.g., after clicking a Launch button or a link with target=_blank). Returns the new tab's URL and index. Call this BEFORE clicking if you expect a new tab to open, then click, then this will capture the new tab.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "timeout": {"type": "integer", "description": "Max milliseconds to wait for new tab. Default 10000."}
+                    }
+                }
+            },
+            {
                 "name": "done",
                 "description": "Signal you've visited all the pages referenced in the guide.",
                 "input_schema": {"type": "object", "properties": {}}
@@ -264,6 +292,14 @@ A screenshot is captured automatically after every action you take. You do NOT n
 - If a button opens a new panel, dialog, or section, wait for it to load before proceeding
 - Some steps may refer to actions you can't perform (external tools, mobile devices, etc.) — skip those and move to the next step you CAN do in the browser
 - The guide may have [SCREENSHOT: ...] markers — these are just placeholders, ignore them and keep following the instructions
+
+## Multi-tab / multi-window support
+Some actions (like clicking "Launch" buttons or links with target=_blank) will open NEW BROWSER TABS. When this happens:
+- Use wait_for_new_tab AFTER clicking a button that opens a new tab — it will automatically switch you to the new tab
+- Use list_tabs to see all open tabs and their URLs
+- Use switch_tab to move between tabs (e.g., go back to the lab guide tab, then switch to the Okta admin tab)
+- After switching tabs, always call get_page_state to see the new tab's content
+- The recording captures frames from whichever tab is currently active
 
 ## Screenshots needed at these points in the guide
 {marker_pages}
@@ -316,10 +352,22 @@ Make sure you reach the pages/views described above during your navigation. The 
                 elif name == "click":
                     selector = args.get("selector", "")
                     force = args.get("force", False)
+                    old_page_count = len(self.context.pages)
                     try:
                         self.page.locator(selector).first.click(force=force, timeout=8000)
                         self.page.wait_for_timeout(1500)
-                        result = f"Clicked '{selector}'. URL: {self.page.url}"
+                        # Check if a new tab was opened by the click
+                        if len(self.context.pages) > old_page_count:
+                            new_page = self.context.pages[-1]
+                            try:
+                                new_page.wait_for_load_state("networkidle", timeout=10000)
+                            except Exception:
+                                pass
+                            new_page.wait_for_timeout(1000)
+                            self.page = new_page
+                            result = f"Clicked '{selector}' — NEW TAB opened [{len(self.context.pages)-1}]: {new_page.url}. You are now on the new tab."
+                        else:
+                            result = f"Clicked '{selector}'. URL: {self.page.url}"
                     except Exception as e:
                         result = f"Click failed: {e}"
                     self.capture_frame(f"click:{selector[:40]}")
@@ -362,6 +410,36 @@ Make sure you reach the pages/views described above during your navigation. The 
                         result = text_content
                     except Exception as e:
                         result = f"Error getting text: {e}"
+                elif name == "list_tabs":
+                    tabs = []
+                    for i, p in enumerate(self.context.pages):
+                        active = " (ACTIVE)" if p == self.page else ""
+                        tabs.append(f"  [{i}] {p.url[:80]} — {p.title()[:40]}{active}")
+                    result = f"Open tabs ({len(self.context.pages)}):\n" + "\n".join(tabs)
+                elif name == "switch_tab":
+                    tab_idx = args.get("tab_index", 0)
+                    pages = self.context.pages
+                    if 0 <= tab_idx < len(pages):
+                        self.page = pages[tab_idx]
+                        self.page.bring_to_front()
+                        self.page.wait_for_timeout(1000)
+                        result = f"Switched to tab [{tab_idx}]: {self.page.url}"
+                        self.capture_frame(f"switch_tab:{tab_idx}")
+                    else:
+                        result = f"Invalid tab index {tab_idx}. Have {len(pages)} tabs (0-{len(pages)-1})."
+                elif name == "wait_for_new_tab":
+                    timeout_ms = args.get("timeout", 10000)
+                    old_count = len(self.context.pages)
+                    try:
+                        new_page = self.context.wait_for_event("page", timeout=timeout_ms)
+                        new_page.wait_for_load_state("networkidle", timeout=15000)
+                        new_page.wait_for_timeout(1500)
+                        self.page = new_page
+                        new_idx = len(self.context.pages) - 1
+                        result = f"New tab opened [{new_idx}]: {new_page.url} — {new_page.title()}"
+                        self.capture_frame(f"new_tab:{new_page.url[:50]}")
+                    except Exception as e:
+                        result = f"No new tab opened within {timeout_ms}ms. Current tabs: {len(self.context.pages)}"
                 elif name == "wait":
                     ms = args.get("milliseconds", 2000)
                     sel = args.get("selector")
