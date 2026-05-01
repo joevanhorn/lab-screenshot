@@ -38,7 +38,7 @@ def select_frames(
         print("ERROR: litellm required for frame selection. pip install litellm", file=sys.stderr)
         sys.exit(1)
 
-    model_id = os.environ.get("LLM_MODEL", "claude-sonnet-4-6")
+    model_id = os.environ.get("LLM_MODEL", "claude-sonnet-4-5-20250929")
     results: dict[int, str] = {}
 
     def _log(msg: str):
