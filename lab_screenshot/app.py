@@ -447,7 +447,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; b
             </div>
             <div class="form-group">
                 <label>Model (optional)</label>
-                <input type="text" id="model" placeholder="claude-sonnet-4-5-20250929">
+                <input type="text" id="model" placeholder="claude-4-5-sonnet">
             </div>
         </div>
         <div class="checkbox-row">
