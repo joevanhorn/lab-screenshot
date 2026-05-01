@@ -308,6 +308,13 @@ Some actions (like clicking "Launch" buttons or links with target=_blank) will o
 - After switching tabs, always call get_page_state to see the new tab's content
 - The recording captures frames from whichever tab is currently active
 
+## Loading states and spinners
+Some actions trigger loading states (progress bars, spinners, "loading..." text). When you see these:
+- Call wait with 5000-15000 milliseconds to let the content load
+- Then call get_page_state to check if loading is complete
+- If you still see a loading indicator, wait again
+- Common loading patterns: progress bars, spinning icons, "Loading...", "Please wait...", skeleton screens
+
 ## Screenshots needed at these points in the guide
 {marker_pages}
 
