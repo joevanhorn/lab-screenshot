@@ -389,6 +389,13 @@ The human user may have opened multiple tabs during setup (e.g., a lab guide tab
 - Use switch_tab to move between tabs
 - After switching tabs, look at the screenshot to confirm where you are
 
+## CRITICAL: Do NOT repeat the same action
+- After clicking a button (like "Execute", "Save", "Submit"), it has ALREADY WORKED. Do NOT click it again.
+- Look at the screenshot to see the RESULT of your action (success message, changed content, new data)
+- Some buttons trigger async operations (simulations, API calls). Click ONCE, then wait 3-5 seconds, then check the screenshot for results.
+- If the page looks different after your click (even subtly), your action succeeded. Move to the NEXT step.
+- NEVER click the same button more than once unless the guide explicitly says to repeat the action.
+
 ## Loading states
 When you see loading indicators in the screenshot (spinners, progress bars, skeleton screens):
 - Call wait with 3000-10000 milliseconds
@@ -414,6 +421,8 @@ Make sure you reach EACH of these page views during navigation. The recording sy
             litellm_kwargs["api_base"] = os.environ["LITELLM_API_BASE"]
             litellm_kwargs["api_key"] = os.environ.get("LITELLM_API_KEY", "")
 
+        recent_actions = []  # Track recent actions for stuck detection
+
         for iteration in range(max_iterations):
             self._log(f"nav iteration {iteration + 1}/{max_iterations}")
 
@@ -423,10 +432,18 @@ Make sure you reach EACH of these page views during navigation. The recording sy
                 # Include a screenshot of the current page so the LLM can SEE it
                 try:
                     page_b64 = self._capture_page_b64()
+                    screenshot_text = "Here is a screenshot of the current page. Use it to verify your last action and decide what to do next."
+
+                    # Stuck detection: if same action repeated 3+ times, nudge
+                    if len(recent_actions) >= 3 and len(set(recent_actions[-3:])) == 1:
+                        stuck_action = recent_actions[-1]
+                        screenshot_text += f"\n\nWARNING: You have repeated the same action '{stuck_action}' {sum(1 for a in recent_actions if a == stuck_action)} times. The action has ALREADY COMPLETED — you can see the result in this screenshot. STOP repeating it and MOVE ON to the next step in the guide. Look at the screenshot carefully to see what changed, then proceed to the next instruction."
+                        self._log(f"Stuck detected: '{stuck_action}' repeated {sum(1 for a in recent_actions if a == stuck_action)} times")
+
                     call_messages.append({
                         "role": "user",
                         "content": [
-                            {"type": "text", "text": "Here is a screenshot of the current page. Use it to verify your last action and decide what to do next."},
+                            {"type": "text", "text": screenshot_text},
                             {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{page_b64}"}}
                         ]
                     })
@@ -447,6 +464,7 @@ Make sure you reach EACH of these page views during navigation. The recording sy
 
             tool_results = []
             is_done = False
+            iteration_actions = []
 
             for tc in message.tool_calls:
                 name = tc.function.name
@@ -454,6 +472,11 @@ Make sure you reach EACH of these page views during navigation. The recording sy
                     args = json.loads(tc.function.arguments)
                 except json.JSONDecodeError:
                     args = {}
+
+                # Track action for stuck detection
+                if name in ("click", "fill", "navigate"):
+                    action_key = f"{name}:{args.get('selector', args.get('url', ''))[:50]}"
+                    iteration_actions.append(action_key)
 
                 if name == "done":
                     is_done = True
@@ -595,6 +618,7 @@ Make sure you reach EACH of these page views during navigation. The recording sy
                 tool_results.append({"role": "tool", "tool_call_id": tc.id, "content": result})
 
             messages.extend(tool_results)
+            recent_actions.extend(iteration_actions)
 
             if is_done:
                 break
