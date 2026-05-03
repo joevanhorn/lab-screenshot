@@ -434,12 +434,6 @@ Make sure you reach EACH of these page views during navigation. The recording sy
                     page_b64 = self._capture_page_b64()
                     screenshot_text = "Here is a screenshot of the current page. Use it to verify your last action and decide what to do next."
 
-                    # Stuck detection: if same action repeated 3+ times, nudge
-                    if len(recent_actions) >= 3 and len(set(recent_actions[-3:])) == 1:
-                        stuck_action = recent_actions[-1]
-                        screenshot_text += f"\n\nWARNING: You have repeated the same action '{stuck_action}' {sum(1 for a in recent_actions if a == stuck_action)} times. The action has ALREADY COMPLETED — you can see the result in this screenshot. STOP repeating it and MOVE ON to the next step in the guide. Look at the screenshot carefully to see what changed, then proceed to the next instruction."
-                        self._log(f"Stuck detected: '{stuck_action}' repeated {sum(1 for a in recent_actions if a == stuck_action)} times")
-
                     call_messages.append({
                         "role": "user",
                         "content": [
@@ -477,6 +471,19 @@ Make sure you reach EACH of these page views during navigation. The recording sy
                 if name in ("click", "fill", "navigate"):
                     action_key = f"{name}:{args.get('selector', args.get('url', ''))[:50]}"
                     iteration_actions.append(action_key)
+
+                    # HARD BLOCK: refuse to execute after 3 repeats
+                    repeat_count = recent_actions.count(action_key)
+                    if repeat_count >= 3:
+                        self._log(f"BLOCKED repeated action ({repeat_count}x): {action_key}")
+                        result = (
+                            f"REFUSED: This action '{action_key}' has already been executed {repeat_count} times and will no longer run. "
+                            f"The action ALREADY COMPLETED SUCCESSFULLY on the first attempt. "
+                            f"You MUST move on to the NEXT step in the guide. Do NOT try this action again with a different selector — it is DONE. "
+                            f"Look at the screenshot and proceed to the next instruction."
+                        )
+                        tool_results.append({"role": "tool", "tool_call_id": tc.id, "content": result})
+                        continue
 
                 if name == "done":
                     is_done = True
