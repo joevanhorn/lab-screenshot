@@ -105,7 +105,7 @@ class GuideRecorder:
         self._log(f"frame {idx}: {action} → {frame.url[:60]} ({len(png_bytes):,}b)")
         return frame
 
-    def record_guide(self, guide_text: str, max_iterations: int = 40) -> Recording:
+    def record_guide(self, guide_text: str, max_iterations: int = 100) -> Recording:
         """
         Execute guide steps via LLM and capture frames throughout.
         Returns the complete Recording with all frames.
@@ -277,9 +277,16 @@ You are already on the correct starting page. A human user authenticated and nav
 - If you need to go somewhere, look for a matching link/button on the page and click it
 - Do NOT try to guess domain names or construct URLs
 
+## IMPORTANT: Check for open tabs immediately
+The human user may have opened multiple tabs during setup (e.g., a lab guide tab AND an admin console tab).
+- Call list_tabs early (within your first 3 actions) to see ALL open tabs
+- If there's an admin console or application tab already open, you can switch_tab to it when the guide says to work there
+- Don't waste iterations trying to click "Launch" buttons if the target is already open in another tab
+
 ## Your approach
 1. FIRST, call get_page_state to see where you are and what's on screen — this is your starting point, DO NOT navigate away
-2. Read the guide instructions carefully and execute them IN ORDER
+2. IMMEDIATELY call list_tabs to see if the human left other tabs open (admin console, etc.)
+3. Read the guide instructions carefully and execute them IN ORDER
 3. For each step:
    - Read what the step says to do (click, navigate, fill in, select, etc.)
    - Look at the current page state to find the right element
