@@ -232,222 +232,203 @@ class GuideRecorder:
         png_bytes = self.page.screenshot(type="png")
         return base64.b64encode(png_bytes).decode("ascii")
 
+    # -- Browser tool definitions (shared across all execution phases) --
+    TOOLS = [
+        {"name": "navigate", "description": "Navigate to a full URL. Only use when the guide gives you an explicit URL — prefer clicking links/buttons.", "input_schema": {"type": "object", "properties": {"url": {"type": "string"}}, "required": ["url"]}},
+        {"name": "click", "description": "Click an element. Use text selectors: 'text=Security', 'button:has-text(\"Save\")', 'a:has-text(\"Reports\")', '[data-se=\"save\"]'. For menus, click the header first, wait, then sub-items.", "input_schema": {"type": "object", "properties": {"selector": {"type": "string"}, "force": {"type": "boolean"}}, "required": ["selector"]}},
+        {"name": "fill", "description": "Fill an input. Use get_page_state first to find name/id, then: input[name=\"x\"], input#id.", "input_schema": {"type": "object", "properties": {"selector": {"type": "string"}, "value": {"type": "string"}}, "required": ["selector", "value"]}},
+        {"name": "get_page_state", "description": "Get current URL, title, and visible interactive elements with their selectors.", "input_schema": {"type": "object", "properties": {}}},
+        {"name": "get_page_text", "description": "Get visible text of current page or a CSS-scoped section.", "input_schema": {"type": "object", "properties": {"selector": {"type": "string"}}}},
+        {"name": "wait", "description": "Wait milliseconds or for a CSS selector to appear.", "input_schema": {"type": "object", "properties": {"milliseconds": {"type": "integer"}, "selector": {"type": "string"}}}},
+        {"name": "list_tabs", "description": "List all open browser tabs.", "input_schema": {"type": "object", "properties": {}}},
+        {"name": "switch_tab", "description": "Switch to tab by index. Use list_tabs first.", "input_schema": {"type": "object", "properties": {"tab_index": {"type": "integer"}}, "required": ["tab_index"]}},
+        {"name": "wait_for_new_tab", "description": "Wait for a new tab to open after clicking a link/button.", "input_schema": {"type": "object", "properties": {"timeout": {"type": "integer"}}}},
+        {"name": "section_complete", "description": "Signal that the current section's goal has been achieved. Call this when you can see the success condition in the screenshot.", "input_schema": {"type": "object", "properties": {}}},
+    ]
+
     def _drive_with_llm(self, guide_text: str, action_steps: str, markers, max_iterations: int):
-        """Use LLM to navigate through guide steps, capturing frames at each action."""
+        """Comprehend guide, then execute section by section."""
         try:
             from litellm import completion
         except ImportError:
             self._log("litellm not available — capturing initial frame only")
             return
 
-        model_id = os.environ.get("LLM_MODEL", "claude-sonnet-4-6")
+        self._completion = completion
+        self._model_id = os.environ.get("LLM_MODEL", "claude-sonnet-4-6")
+        self._litellm_extra = {}
+        if os.environ.get("LITELLM_API_BASE"):
+            self._litellm_extra["api_base"] = os.environ["LITELLM_API_BASE"]
+            self._litellm_extra["api_key"] = os.environ.get("LITELLM_API_KEY", "")
 
-        # Simpler tool set — just navigation, no screenshot decisions
-        tools = [
-            {
-                "name": "navigate",
-                "description": "Navigate to a full URL. Only use this when you know the exact URL — prefer clicking links and buttons instead.",
-                "input_schema": {
-                    "type": "object",
-                    "properties": {"url": {"type": "string", "description": "Full URL to navigate to"}},
-                    "required": ["url"]
-                }
-            },
-            {
-                "name": "click",
-                "description": "Click an element on the page. Use text-based selectors for best results. Examples: 'text=Security', 'text=System Log', 'a:has-text(\"Reports\")', 'button:has-text(\"Save\")', 'button:has-text(\"Launch\")', '[data-se=\"save\"]'. For navigation menus, click the section header first, wait, then click sub-items.",
-                "input_schema": {
-                    "type": "object",
-                    "properties": {
-                        "selector": {"type": "string"},
-                        "force": {"type": "boolean"}
-                    },
-                    "required": ["selector"]
-                }
-            },
-            {
-                "name": "fill",
-                "description": "Fill an input field with text. IMPORTANT: To target the correct field, use precise selectors based on the field's name, id, or label. Examples: 'input[name=\"org_name\"]', 'input#org-name', '#session-timeout'. Always call get_page_state first to see available input fields and their name/id attributes, then use those for targeting.",
-                "input_schema": {
-                    "type": "object",
-                    "properties": {
-                        "selector": {"type": "string", "description": "Playwright selector — use name or id attributes for precision: input[name=\"field_name\"], input#field-id"},
-                        "value": {"type": "string", "description": "Text to type into the field"}
-                    },
-                    "required": ["selector", "value"]
-                }
-            },
-            {
-                "name": "get_page_state",
-                "description": "Get current URL, title, and visible interactive elements.",
-                "input_schema": {"type": "object", "properties": {}}
-            },
-            {
-                "name": "get_page_text",
-                "description": "Get the visible text content of the current page or a specific section. Useful for reading instructions, finding specific text, or verifying page content.",
-                "input_schema": {
-                    "type": "object",
-                    "properties": {
-                        "selector": {"type": "string", "description": "Optional CSS selector to scope text. Omit for full page."}
-                    }
-                }
-            },
-            {
-                "name": "wait",
-                "description": "Wait milliseconds or for a selector.",
-                "input_schema": {
-                    "type": "object",
-                    "properties": {
-                        "milliseconds": {"type": "integer"},
-                        "selector": {"type": "string"}
-                    }
-                }
-            },
-            {
-                "name": "list_tabs",
-                "description": "List all open browser tabs with their index, URL, and title. Use this to see what tabs are available after clicking a link that opened a new tab.",
-                "input_schema": {"type": "object", "properties": {}}
-            },
-            {
-                "name": "switch_tab",
-                "description": "Switch to a different browser tab by index number. After switching, call get_page_state to see the new tab's content. Use list_tabs first to see available tabs.",
-                "input_schema": {
-                    "type": "object",
-                    "properties": {
-                        "tab_index": {"type": "integer", "description": "0-based index of the tab to switch to (from list_tabs output)"}
-                    },
-                    "required": ["tab_index"]
-                }
-            },
-            {
-                "name": "wait_for_new_tab",
-                "description": "Wait for a new tab to open (e.g., after clicking a Launch button or a link with target=_blank). Returns the new tab's URL and index. Call this BEFORE clicking if you expect a new tab to open, then click, then this will capture the new tab.",
-                "input_schema": {
-                    "type": "object",
-                    "properties": {
-                        "timeout": {"type": "integer", "description": "Max milliseconds to wait for new tab. Default 10000."}
-                    }
-                }
-            },
-            {
-                "name": "done",
-                "description": "Signal you've visited all the pages referenced in the guide.",
-                "input_schema": {"type": "object", "properties": {}}
-            },
-        ]
+        # Phase 1: Comprehend the guide
+        sections = self._comprehend_guide(guide_text, action_steps, markers)
 
-        marker_pages = "\n".join(f"  [{m.index}] {m.description}" for m in markers)
+        # Phase 2: Execute each section
+        total_iters_used = 0
+        iters_per_section = max(10, max_iterations // max(len(sections), 1))
 
-        system = f"""You are a browser automation agent. Your job is to follow the step-by-step instructions in a lab guide, executing each action exactly as described.
+        for i, section in enumerate(sections):
+            if section.get("skip_reason"):
+                self._log(f"SKIP section {i+1}/{len(sections)}: {section['title']} — {section['skip_reason']}")
+                continue
 
-You are controlling a real browser. A human user has already authenticated and set up the session for you. Your starting URL is whatever page the browser is currently on.
+            self._log(f"=== Section {i+1}/{len(sections)}: {section['title']} ===")
+            iters_used = self._execute_section(section, max_iterations=iters_per_section)
+            total_iters_used += iters_used
 
-## VISUAL FEEDBACK
-After every action you take, you will receive a screenshot of the current page. USE THIS SCREENSHOT to:
-- Verify your action worked (did the page change? did a dialog open?)
-- Understand the page layout (sidebar, main content, panels)
-- Find the right elements to interact with next
-- Confirm you are on the correct page before moving to the next step
+            if total_iters_used >= max_iterations:
+                self._log("Max total iterations reached")
+                break
 
-This visual feedback is your primary way of understanding what's happening. The element list from get_page_state is supplementary — use it to find exact selectors, but rely on the screenshot to understand the page.
+        self._log(f"Navigation complete: {len(self.recording.frames)} frames captured in {total_iters_used} iterations")
 
-## CRITICAL: Do NOT guess URLs
-You are already on the correct starting page. A human user authenticated and navigated there for you.
-- NEVER type URLs directly into the navigate tool unless the guide explicitly gives you a URL to go to
-- ALWAYS use click-based navigation — click links, buttons, and menu items visible on the page
-- If you need to go somewhere, look for a matching link/button on the page and click it
+    def _comprehend_guide(self, guide_text: str, action_steps: str, markers) -> list[dict]:
+        """Phase 1: LLM reads the guide and produces a structured execution plan."""
+        marker_list = "\n".join(f"  [{m.index}] {m.description}" for m in markers)
 
-## IMPORTANT: Check for open tabs immediately
-The human user may have opened multiple tabs during setup (e.g., a lab guide tab AND an admin console tab).
-- Call list_tabs early (within your first 3 actions) to see ALL open tabs
-- If there's an admin console or application tab already open, switch_tab to it when needed
+        prompt = f"""Read this lab guide and break it into executable sections for a browser automation agent.
 
-## Your approach
-1. FIRST, call get_page_state to see where you are — look at the screenshot you receive
-2. Call list_tabs to see if the human left other tabs open (admin console, etc.)
-3. Follow the ACTION STEPS below in order. For each step:
-   a. Look at the screenshot to understand the current page
-   b. Identify the element or area the step refers to
-   c. Execute the action (click, fill, navigate)
-   d. Check the next screenshot to verify it worked
-   e. If it didn't work, try a different selector or approach
-4. When you need to find exact selectors, call get_page_state to see element attributes
-5. Call done when you've completed all the steps
+For each section, identify:
+1. **title**: Short descriptive name
+2. **goal**: What should be accomplished (1-2 sentences)
+3. **steps**: Specific browser actions needed (click X, navigate to Y, fill in Z, observe W)
+4. **success_looks_like**: How to know this section is DONE — what should be visible on screen
+5. **screenshot_markers**: Which marker indices should be captured during this section (can be empty)
+6. **skip_reason**: Set to a string like "requires mobile device" if the section can't be done in a browser. Set to null if it CAN be done.
 
-## Key rules
-- Follow the guide steps in order — do what they say
-- Use click navigation, not URL typing
-- Use text-based selectors: 'text=Security', 'a:has-text("System Log")', 'button:has-text("Save")'
-- Use the sidebar/navigation menu visible in the screenshot to navigate
-- If a button opens a new panel or dialog, wait for it to load before proceeding
-- Some steps refer to external tools (mobile devices, attack simulators). If you can interact with them in the browser, do so. If not, skip and move to the next browser-based step
-- [SCREENSHOT: ...] markers tell you what page state is needed — make sure you reach that view
+## Screenshot markers in the guide:
+{marker_list}
 
-## Multi-tab support
-- Use wait_for_new_tab AFTER clicking a button that opens a new tab
-- Use list_tabs to see all open tabs
-- Use switch_tab to move between tabs
-- After switching tabs, look at the screenshot to confirm where you are
+## Rules:
+- Group related steps by guide heading/section
+- Each section needs a CLEAR, OBSERVABLE completion condition
+- Some steps involve external tools (mobile devices, physical equipment, virtual desktops) — mark those with skip_reason
+- If a section has a button that triggers an async operation (like running a simulation), the steps should be: click the button, wait for results, observe the outcome
+- Be specific in steps: "Click the Execute button in the attack simulator panel" not "Run the simulation"
+- Assign each screenshot marker to exactly one section
 
-## CRITICAL: Do NOT repeat the same action
-- After clicking a button (like "Execute", "Save", "Submit"), it has ALREADY WORKED. Do NOT click it again.
-- Look at the screenshot to see the RESULT of your action (success message, changed content, new data)
-- Some buttons trigger async operations (simulations, API calls). Click ONCE, then wait 3-5 seconds, then check the screenshot for results.
-- If the page looks different after your click (even subtly), your action succeeded. Move to the NEXT step.
-- NEVER click the same button more than once unless the guide explicitly says to repeat the action.
-
-## Loading states
-When you see loading indicators in the screenshot (spinners, progress bars, skeleton screens):
-- Call wait with 3000-10000 milliseconds
-- Check the next screenshot to see if loading completed
-- Repeat if still loading
-
-## Screenshots needed at these points
-{marker_pages}
-
-Make sure you reach EACH of these page views during navigation. The recording system captures frames automatically — just be on the right page."""
-
-        # Give the LLM the condensed action steps as primary instructions,
-        # with the full guide as reference context
-        messages = [{"role": "user", "content": f"""Navigate through this lab guide by following the action steps below.
-
-## ACTION STEPS (follow these in order):
+## Condensed action steps:
 {action_steps}
 
-## FULL GUIDE (for reference context):
-{guide_text}"""}]
-        litellm_kwargs = {"model": model_id, "tools": tools, "max_tokens": 4096}
-        if os.environ.get("LITELLM_API_BASE"):
-            litellm_kwargs["api_base"] = os.environ["LITELLM_API_BASE"]
-            litellm_kwargs["api_key"] = os.environ.get("LITELLM_API_KEY", "")
+## Full guide for context:
+{guide_text}
 
-        recent_actions = []  # Track recent actions for stuck detection
+Respond with ONLY a JSON object:
+{{"sections": [{{"title": "...", "goal": "...", "steps": ["..."], "success_looks_like": "...", "screenshot_markers": [0], "skip_reason": null}}, ...]}}"""
+
+        try:
+            response = self._completion(
+                model=self._model_id,
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=4096,
+                **self._litellm_extra,
+            )
+            reply = response.choices[0].message.content
+
+            # Parse JSON (handle markdown code blocks)
+            if "```" in reply:
+                reply = reply.split("```")[1]
+                if reply.startswith("json"):
+                    reply = reply[4:]
+
+            plan = json.loads(reply.strip())
+            sections = plan.get("sections", [])
+
+            self._log(f"Comprehended guide → {len(sections)} sections:")
+            for s in sections:
+                skip = f" [SKIP: {s.get('skip_reason')}]" if s.get('skip_reason') else ""
+                markers_str = s.get('screenshot_markers', [])
+                self._log(f"  • {s['title']}{skip} (markers: {markers_str})")
+
+            return sections
+
+        except Exception as e:
+            self._log(f"Guide comprehension failed: {e} — falling back to single section")
+            return [{
+                "title": "Execute all guide steps",
+                "goal": "Follow all steps in the guide in order",
+                "steps": ["Follow the guide instructions in order"],
+                "success_looks_like": "All pages referenced in the guide have been visited",
+                "screenshot_markers": [m.index for m in markers],
+                "skip_reason": None,
+            }]
+
+    def _execute_section(self, section: dict, max_iterations: int = 25) -> int:
+        """Execute one section of the guide. Returns iterations used."""
+
+        title = section["title"]
+        goal = section["goal"]
+        steps = "\n".join(f"  {i+1}. {s}" for i, s in enumerate(section["steps"]))
+        success = section["success_looks_like"]
+        markers = section.get("screenshot_markers", [])
+
+        system = f"""You are a browser automation agent executing ONE section of a lab guide.
+
+## YOUR CURRENT GOAL
+{goal}
+
+## STEPS TO FOLLOW
+{steps}
+
+## YOU ARE DONE WHEN
+{success}
+
+When you can see the success condition in the screenshot, call section_complete immediately.
+
+## VISUAL FEEDBACK
+After every action, you receive a screenshot. Use it to:
+- Verify your action worked (did the page change?)
+- Understand the layout (sidebar, main content, panels, dialogs)
+- Check if the success condition is met
+- Find the right elements for the next step
+
+## RULES
+- Execute steps in order. After each action, check the screenshot.
+- Use click-based navigation: 'text=Security', 'button:has-text("Save")', 'a:has-text("Reports")'
+- Use get_page_state when you need exact selectors (name/id attributes)
+- NEVER click the same button twice — if you clicked it and the page changed, it worked
+- If a button triggers an operation (simulation, save, etc.), click ONCE, wait 3-5 seconds, then observe results
+- If a step can't be done in the browser (external tool, mobile device), skip it
+- If you're stuck, try get_page_state or get_page_text to understand what's on screen
+- Call section_complete as soon as the success condition is visible
+
+## IMPORTANT: Check for open tabs
+Call list_tabs early to see if relevant tabs are already open (admin console, etc.)."""
+
+        messages = [{"role": "user", "content": f"Execute this section: {title}\n\nGoal: {goal}\nSteps:\n{steps}"}]
+
+        recent_actions = []
 
         for iteration in range(max_iterations):
-            self._log(f"nav iteration {iteration + 1}/{max_iterations}")
+            self._log(f"  [{title[:30]}] iteration {iteration + 1}/{max_iterations}")
 
-            # Build call messages: persistent history + ephemeral screenshot
+            # Build messages with ephemeral screenshot
             call_messages = list(messages)
             if iteration > 0:
-                # Include a screenshot of the current page so the LLM can SEE it
                 try:
                     page_b64 = self._capture_page_b64()
-                    screenshot_text = "Here is a screenshot of the current page. Use it to verify your last action and decide what to do next."
-
                     call_messages.append({
                         "role": "user",
                         "content": [
-                            {"type": "text", "text": screenshot_text},
+                            {"type": "text", "text": "Screenshot of the current page. Check if the success condition is met. If yes, call section_complete. Otherwise, continue with the next step."},
                             {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{page_b64}"}}
                         ]
                     })
                 except Exception as e:
-                    self._log(f"Screenshot for vision failed: {e}")
+                    self._log(f"  Screenshot failed: {e}")
 
             try:
-                response = completion(**litellm_kwargs, messages=call_messages, system=system)
+                response = self._completion(
+                    model=self._model_id,
+                    messages=call_messages,
+                    tools=self.TOOLS,
+                    max_tokens=4096,
+                    system=system,
+                    **self._litellm_extra,
+                )
             except Exception as e:
-                self._log(f"LLM error: {e}")
+                self._log(f"  LLM error: {e}")
                 break
 
             message = response.choices[0].message
@@ -457,177 +438,169 @@ Make sure you reach EACH of these page views during navigation. The recording sy
                 break
 
             tool_results = []
-            is_done = False
-            iteration_actions = []
+            section_done = False
 
             for tc in message.tool_calls:
-                name = tc.function.name
-                try:
-                    args = json.loads(tc.function.arguments)
-                except json.JSONDecodeError:
-                    args = {}
-
-                # Track action for stuck detection
-                if name in ("click", "fill", "navigate"):
-                    action_key = f"{name}:{args.get('selector', args.get('url', ''))[:50]}"
-                    iteration_actions.append(action_key)
-
-                    # HARD BLOCK: refuse to execute after 3 repeats
-                    repeat_count = recent_actions.count(action_key)
-                    if repeat_count >= 3:
-                        self._log(f"BLOCKED repeated action ({repeat_count}x): {action_key}")
-                        result = (
-                            f"REFUSED: This action '{action_key}' has already been executed {repeat_count} times and will no longer run. "
-                            f"The action ALREADY COMPLETED SUCCESSFULLY on the first attempt. "
-                            f"You MUST move on to the NEXT step in the guide. Do NOT try this action again with a different selector — it is DONE. "
-                            f"Look at the screenshot and proceed to the next instruction."
-                        )
-                        tool_results.append({"role": "tool", "tool_call_id": tc.id, "content": result})
-                        continue
-
-                if name == "done":
-                    is_done = True
-                    result = "Navigation complete."
-                elif name == "navigate":
-                    url = args.get("url", "")
-                    try:
-                        self.page.goto(url, wait_until="networkidle", timeout=15000)
-                        self.page.wait_for_timeout(1500)
-                        result = f"Navigated to {self.page.url}"
-                    except Exception as e:
-                        result = f"Navigate error: {e}"
-                    self.capture_frame(f"navigate:{url[:60]}")
-                elif name == "click":
-                    selector = args.get("selector", "")
-                    force = args.get("force", False)
-                    old_page_count = len(self.context.pages)
-                    try:
-                        self.page.locator(selector).first.click(force=force, timeout=8000)
-                        self.page.wait_for_timeout(1500)
-                        # Check if a new tab was opened by the click
-                        if len(self.context.pages) > old_page_count:
-                            new_page = self.context.pages[-1]
-                            try:
-                                new_page.wait_for_load_state("networkidle", timeout=10000)
-                            except Exception:
-                                pass
-                            new_page.wait_for_timeout(1000)
-                            self.page = new_page
-                            result = f"Clicked '{selector}' — NEW TAB opened [{len(self.context.pages)-1}]: {new_page.url}. You are now on the new tab."
-                        else:
-                            result = f"Clicked '{selector}'. URL: {self.page.url}"
-                    except Exception as e:
-                        result = f"Click failed: {e}"
-                    self.capture_frame(f"click:{selector[:40]}")
-                elif name == "fill":
-                    selector = args.get("selector", "")
-                    value = args.get("value", "")
-                    try:
-                        self.page.fill(selector, value, timeout=8000)
-                        result = f"Filled '{selector}'"
-                    except Exception as e:
-                        result = f"Fill error: {e}"
-                    self.capture_frame(f"fill:{selector[:40]}")
-                elif name == "get_page_state":
-                    elements = self.page.evaluate("""() => {
-                        return Array.from(document.querySelectorAll('a, button, input, select, textarea, [role=button], [role=menuitem], [role=tab], [data-se]'))
-                            .filter(el => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 && r.top < window.innerHeight; })
-                            .slice(0, 80)
-                            .map(el => {
-                                const t = el.tagName.toLowerCase();
-                                const text = (el.textContent||'').trim().replace(/\\s+/g,' ').substring(0,50);
-                                const href = el.getAttribute('href')||'';
-                                const se = el.getAttribute('data-se')||'';
-                                const name = el.getAttribute('name')||'';
-                                const id = el.getAttribute('id')||'';
-                                const type = el.getAttribute('type')||'';
-                                const placeholder = el.getAttribute('placeholder')||'';
-                                const value = el.value||'';
-                                // Find associated label
-                                let label = '';
-                                if (id) {
-                                    const lbl = document.querySelector('label[for="'+id+'"]');
-                                    if (lbl) label = lbl.textContent.trim().substring(0,40);
-                                }
-                                let d = t;
-                                if (type) d += '[type='+type+']';
-                                if (id) d += '#'+id;
-                                if (name) d += '[name='+name+']';
-                                if (se) d += '[data-se='+se+']';
-                                if (label) d += ' label="'+label+'"';
-                                if (placeholder) d += ' placeholder="'+placeholder+'"';
-                                if (t === 'input' || t === 'textarea' || t === 'select') {
-                                    if (value) d += ' value="'+value.substring(0,30)+'"';
-                                }
-                                if (href && href!=='#') d += ' href="'+href.substring(0,60)+'"';
-                                if (text && t !== 'input' && t !== 'textarea') d += ' "'+text+'"';
-                                return d;
-                            });
-                    }""")
-                    result = f"URL: {self.page.url}\nTitle: {self.page.title()}\n\nInteractive elements ({len(elements)}):\n" + "\n".join(f"  - {e}" for e in elements)
-                elif name == "get_page_text":
-                    selector = args.get("selector")
-                    try:
-                        if selector:
-                            text_content = self.page.locator(selector).first.inner_text(timeout=5000)
-                        else:
-                            text_content = self.page.inner_text("body")
-                        if len(text_content) > 4000:
-                            text_content = text_content[:4000] + "\n... (truncated)"
-                        result = text_content
-                    except Exception as e:
-                        result = f"Error getting text: {e}"
-                elif name == "list_tabs":
-                    tabs = []
-                    for i, p in enumerate(self.context.pages):
-                        active = " (ACTIVE)" if p == self.page else ""
-                        tabs.append(f"  [{i}] {p.url[:80]} — {p.title()[:40]}{active}")
-                    result = f"Open tabs ({len(self.context.pages)}):\n" + "\n".join(tabs)
-                elif name == "switch_tab":
-                    tab_idx = args.get("tab_index", 0)
-                    pages = self.context.pages
-                    if 0 <= tab_idx < len(pages):
-                        self.page = pages[tab_idx]
-                        self.page.bring_to_front()
-                        self.page.wait_for_timeout(1000)
-                        result = f"Switched to tab [{tab_idx}]: {self.page.url}"
-                        self.capture_frame(f"switch_tab:{tab_idx}")
-                    else:
-                        result = f"Invalid tab index {tab_idx}. Have {len(pages)} tabs (0-{len(pages)-1})."
-                elif name == "wait_for_new_tab":
-                    timeout_ms = args.get("timeout", 10000)
-                    old_count = len(self.context.pages)
-                    try:
-                        new_page = self.context.wait_for_event("page", timeout=timeout_ms)
-                        new_page.wait_for_load_state("networkidle", timeout=15000)
-                        new_page.wait_for_timeout(1500)
-                        self.page = new_page
-                        new_idx = len(self.context.pages) - 1
-                        result = f"New tab opened [{new_idx}]: {new_page.url} — {new_page.title()}"
-                        self.capture_frame(f"new_tab:{new_page.url[:50]}")
-                    except Exception as e:
-                        result = f"No new tab opened within {timeout_ms}ms. Current tabs: {len(self.context.pages)}"
-                elif name == "wait":
-                    ms = args.get("milliseconds", 2000)
-                    sel = args.get("selector")
-                    if sel:
-                        try:
-                            self.page.wait_for_selector(sel, timeout=ms)
-                            result = f"Selector '{sel}' appeared"
-                        except:
-                            result = f"Selector '{sel}' not found in {ms}ms"
-                    else:
-                        self.page.wait_for_timeout(ms)
-                        result = f"Waited {ms}ms"
-                else:
-                    result = f"Unknown tool: {name}"
-
+                result = self._execute_tool(tc, recent_actions)
+                if tc.function.name == "section_complete":
+                    section_done = True
                 tool_results.append({"role": "tool", "tool_call_id": tc.id, "content": result})
 
             messages.extend(tool_results)
-            recent_actions.extend(iteration_actions)
 
-            if is_done:
+            if section_done:
+                self._log(f"  [{title[:30]}] complete ✓")
                 break
+        else:
+            self._log(f"  [{title[:30]}] max iterations reached")
 
-        self._log(f"Navigation complete: {len(self.recording.frames)} frames captured")
+        return iteration + 1
+
+    def _execute_tool(self, tc, recent_actions: list) -> str:
+        """Execute a single tool call. Returns the result string."""
+        name = tc.function.name
+        try:
+            args = json.loads(tc.function.arguments)
+        except json.JSONDecodeError:
+            args = {}
+
+        # Stuck detection for click/fill/navigate
+        if name in ("click", "fill", "navigate"):
+            action_key = f"{name}:{args.get('selector', args.get('url', ''))[:50]}"
+            repeat_count = recent_actions.count(action_key)
+            recent_actions.append(action_key)
+
+            if repeat_count >= 3:
+                self._log(f"  BLOCKED ({repeat_count}x): {action_key}")
+                return (
+                    f"REFUSED: '{action_key}' already executed {repeat_count} times. "
+                    f"It completed on the first attempt. Move to the next step or call section_complete if the goal is achieved."
+                )
+
+        if name == "section_complete":
+            return "Section marked complete."
+        elif name == "navigate":
+            url = args.get("url", "")
+            try:
+                self.page.goto(url, wait_until="networkidle", timeout=15000)
+                self.page.wait_for_timeout(1500)
+                result = f"Navigated to {self.page.url}"
+            except Exception as e:
+                result = f"Navigate error: {e}"
+            self.capture_frame(f"navigate:{url[:60]}")
+            return result
+        elif name == "click":
+            selector = args.get("selector", "")
+            force = args.get("force", False)
+            old_page_count = len(self.context.pages)
+            try:
+                self.page.locator(selector).first.click(force=force, timeout=8000)
+                self.page.wait_for_timeout(1500)
+                if len(self.context.pages) > old_page_count:
+                    new_page = self.context.pages[-1]
+                    try:
+                        new_page.wait_for_load_state("networkidle", timeout=10000)
+                    except Exception:
+                        pass
+                    new_page.wait_for_timeout(1000)
+                    self.page = new_page
+                    result = f"Clicked '{selector}' — NEW TAB opened [{len(self.context.pages)-1}]: {new_page.url}. You are now on the new tab."
+                else:
+                    result = f"Clicked '{selector}'. URL: {self.page.url}"
+            except Exception as e:
+                result = f"Click failed: {e}"
+            self.capture_frame(f"click:{selector[:40]}")
+            return result
+        elif name == "fill":
+            selector = args.get("selector", "")
+            value = args.get("value", "")
+            try:
+                self.page.fill(selector, value, timeout=8000)
+                result = f"Filled '{selector}'"
+            except Exception as e:
+                result = f"Fill error: {e}"
+            self.capture_frame(f"fill:{selector[:40]}")
+            return result
+        elif name == "get_page_state":
+            elements = self.page.evaluate("""() => {
+                return Array.from(document.querySelectorAll('a, button, input, select, textarea, [role=button], [role=menuitem], [role=tab], [data-se]'))
+                    .filter(el => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 && r.top < window.innerHeight; })
+                    .slice(0, 80)
+                    .map(el => {
+                        const t = el.tagName.toLowerCase();
+                        const text = (el.textContent||'').trim().replace(/\\s+/g,' ').substring(0,50);
+                        const href = el.getAttribute('href')||'';
+                        const se = el.getAttribute('data-se')||'';
+                        const name = el.getAttribute('name')||'';
+                        const id = el.getAttribute('id')||'';
+                        const type = el.getAttribute('type')||'';
+                        const placeholder = el.getAttribute('placeholder')||'';
+                        const value = el.value||'';
+                        let label = '';
+                        if (id) { const lbl = document.querySelector('label[for="'+id+'"]'); if (lbl) label = lbl.textContent.trim().substring(0,40); }
+                        let d = t;
+                        if (type) d += '[type='+type+']';
+                        if (id) d += '#'+id;
+                        if (name) d += '[name='+name+']';
+                        if (se) d += '[data-se='+se+']';
+                        if (label) d += ' label="'+label+'"';
+                        if (placeholder) d += ' placeholder="'+placeholder+'"';
+                        if ((t === 'input' || t === 'textarea' || t === 'select') && value) d += ' value="'+value.substring(0,30)+'"';
+                        if (href && href!=='#') d += ' href="'+href.substring(0,60)+'"';
+                        if (text && t !== 'input' && t !== 'textarea') d += ' "'+text+'"';
+                        return d;
+                    });
+            }""")
+            return f"URL: {self.page.url}\nTitle: {self.page.title()}\n\nInteractive elements ({len(elements)}):\n" + "\n".join(f"  - {e}" for e in elements)
+        elif name == "get_page_text":
+            selector = args.get("selector")
+            try:
+                if selector:
+                    text_content = self.page.locator(selector).first.inner_text(timeout=5000)
+                else:
+                    text_content = self.page.inner_text("body")
+                if len(text_content) > 4000:
+                    text_content = text_content[:4000] + "\n... (truncated)"
+                return text_content
+            except Exception as e:
+                return f"Error getting text: {e}"
+        elif name == "list_tabs":
+            tabs = []
+            for i, p in enumerate(self.context.pages):
+                active = " (ACTIVE)" if p == self.page else ""
+                tabs.append(f"  [{i}] {p.url[:80]} — {p.title()[:40]}{active}")
+            return f"Open tabs ({len(self.context.pages)}):\n" + "\n".join(tabs)
+        elif name == "switch_tab":
+            tab_idx = args.get("tab_index", 0)
+            pages = self.context.pages
+            if 0 <= tab_idx < len(pages):
+                self.page = pages[tab_idx]
+                self.page.bring_to_front()
+                self.page.wait_for_timeout(1000)
+                self.capture_frame(f"switch_tab:{tab_idx}")
+                return f"Switched to tab [{tab_idx}]: {self.page.url}"
+            return f"Invalid tab index {tab_idx}. Have {len(pages)} tabs (0-{len(pages)-1})."
+        elif name == "wait_for_new_tab":
+            timeout_ms = args.get("timeout", 10000)
+            try:
+                new_page = self.context.wait_for_event("page", timeout=timeout_ms)
+                new_page.wait_for_load_state("networkidle", timeout=15000)
+                new_page.wait_for_timeout(1500)
+                self.page = new_page
+                new_idx = len(self.context.pages) - 1
+                self.capture_frame(f"new_tab:{new_page.url[:50]}")
+                return f"New tab opened [{new_idx}]: {new_page.url} — {new_page.title()}"
+            except Exception as e:
+                return f"No new tab opened within {timeout_ms}ms. Current tabs: {len(self.context.pages)}"
+        elif name == "wait":
+            ms = args.get("milliseconds", 2000)
+            sel = args.get("selector")
+            if sel:
+                try:
+                    self.page.wait_for_selector(sel, timeout=ms)
+                    return f"Selector '{sel}' appeared"
+                except:
+                    return f"Selector '{sel}' not found in {ms}ms"
+            self.page.wait_for_timeout(ms)
+            return f"Waited {ms}ms"
+        return f"Unknown tool: {name}"
