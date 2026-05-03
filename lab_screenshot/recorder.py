@@ -105,6 +105,71 @@ class GuideRecorder:
         self._log(f"frame {idx}: {action} → {frame.url[:60]} ({len(png_bytes):,}b)")
         return frame
 
+    def _extract_steps(self, guide_text: str) -> str:
+        """Extract actionable steps from guide, stripping narrative paragraphs.
+
+        Keeps: headers, numbered steps, screenshot markers, tables, NOTE blocks,
+        and lines with bold navigation instructions.
+        """
+        import re
+        lines = guide_text.split('\n')
+        output = []
+        prev_was_blank = False
+
+        for line in lines:
+            stripped = line.strip()
+
+            # Always include headers
+            if stripped.startswith('#'):
+                output.append(line)
+                prev_was_blank = False
+                continue
+
+            # Include numbered steps (1., 2., etc.)
+            if re.match(r'^\d+\.', stripped):
+                output.append(line)
+                prev_was_blank = False
+                continue
+
+            # Include SCREENSHOT markers
+            if '[SCREENSHOT:' in stripped:
+                output.append(line)
+                prev_was_blank = False
+                continue
+
+            # Include table rows
+            if stripped.startswith('|'):
+                output.append(line)
+                prev_was_blank = False
+                continue
+
+            # Include NOTE blocks
+            if stripped.startswith('**NOTE'):
+                output.append(line)
+                prev_was_blank = False
+                continue
+
+            # Include lines with bold navigation/action keywords
+            if '**' in stripped and any(kw in stripped.lower() for kw in [
+                'from the', 'go to', 'navigate', 'select', 'admin console',
+                'click', 'open', 'launch', 'log in', 'sign in',
+            ]):
+                output.append(line)
+                prev_was_blank = False
+                continue
+
+            # Keep single blank lines between content (collapse multiples)
+            if not stripped:
+                if not prev_was_blank and output:
+                    output.append('')
+                    prev_was_blank = True
+                continue
+
+            # Skip narrative paragraphs
+            prev_was_blank = False
+
+        return '\n'.join(output)
+
     def record_guide(self, guide_text: str, max_iterations: int = 100) -> Recording:
         """
         Execute guide steps via LLM and capture frames throughout.
@@ -122,6 +187,10 @@ class GuideRecorder:
 
         self._log(f"Guide: {len(guide_text):,} → {len(clean_text):,} chars (cleaned)")
 
+        # Extract condensed action steps for the LLM
+        action_steps = self._extract_steps(clean_text)
+        self._log(f"Extracted action steps: {len(clean_text):,} → {len(action_steps):,} chars")
+
         markers = parse_markers(guide_text)
         self._log(f"Found {len(markers)} screenshot markers")
 
@@ -130,7 +199,7 @@ class GuideRecorder:
 
         # Use LLM to drive navigation
         try:
-            self._drive_with_llm(clean_text, markers, max_iterations)
+            self._drive_with_llm(clean_text, action_steps, markers, max_iterations)
         except Exception as e:
             self._log(f"LLM navigation error: {e}")
 
@@ -158,7 +227,12 @@ class GuideRecorder:
 
         return self.recording
 
-    def _drive_with_llm(self, guide_text: str, markers, max_iterations: int):
+    def _capture_page_b64(self) -> str:
+        """Capture current page as base64 PNG for LLM vision."""
+        png_bytes = self.page.screenshot(type="png")
+        return base64.b64encode(png_bytes).decode("ascii")
+
+    def _drive_with_llm(self, guide_text: str, action_steps: str, markers, max_iterations: int):
         """Use LLM to navigate through guide steps, capturing frames at each action."""
         try:
             from litellm import completion
@@ -268,67 +342,74 @@ class GuideRecorder:
 
 You are controlling a real browser. A human user has already authenticated and set up the session for you. Your starting URL is whatever page the browser is currently on.
 
-A screenshot is captured automatically after every action you take. You do NOT need to take screenshots — just follow the instructions.
+## VISUAL FEEDBACK
+After every action you take, you will receive a screenshot of the current page. USE THIS SCREENSHOT to:
+- Verify your action worked (did the page change? did a dialog open?)
+- Understand the page layout (sidebar, main content, panels)
+- Find the right elements to interact with next
+- Confirm you are on the correct page before moving to the next step
+
+This visual feedback is your primary way of understanding what's happening. The element list from get_page_state is supplementary — use it to find exact selectors, but rely on the screenshot to understand the page.
 
 ## CRITICAL: Do NOT guess URLs
 You are already on the correct starting page. A human user authenticated and navigated there for you.
 - NEVER type URLs directly into the navigate tool unless the guide explicitly gives you a URL to go to
-- ALWAYS use click-based navigation — click links, buttons, and menu items that are visible on the current page
+- ALWAYS use click-based navigation — click links, buttons, and menu items visible on the page
 - If you need to go somewhere, look for a matching link/button on the page and click it
-- Do NOT try to guess domain names or construct URLs
 
 ## IMPORTANT: Check for open tabs immediately
 The human user may have opened multiple tabs during setup (e.g., a lab guide tab AND an admin console tab).
 - Call list_tabs early (within your first 3 actions) to see ALL open tabs
-- If there's an admin console or application tab already open, you can switch_tab to it when the guide says to work there
-- Don't waste iterations trying to click "Launch" buttons if the target is already open in another tab
+- If there's an admin console or application tab already open, switch_tab to it when needed
 
 ## Your approach
-1. FIRST, call get_page_state to see where you are and what's on screen — this is your starting point, DO NOT navigate away
-2. IMMEDIATELY call list_tabs to see if the human left other tabs open (admin console, etc.)
-3. Read the guide instructions carefully and execute them IN ORDER
-3. For each step:
-   - Read what the step says to do (click, navigate, fill in, select, etc.)
-   - Look at the current page state to find the right element
-   - Execute the action using the appropriate tool
-   - Call get_page_state after each action to verify it worked
-4. If a step says "navigate to X" or "go to X", look for a link or menu item matching X on the current page and click it — don't guess URLs
-5. If a step says "click X", find the element with matching text and click it
-6. If a step says "fill in X with Y", FIRST call get_page_state to see all input fields with their name/id attributes, THEN use fill with a precise selector like input#field-id or input[name="field_name"]. Fill each field individually with its own fill call.
-7. If something doesn't work, try alternative selectors or approaches
-8. Call done when you've completed all the steps
+1. FIRST, call get_page_state to see where you are — look at the screenshot you receive
+2. Call list_tabs to see if the human left other tabs open (admin console, etc.)
+3. Follow the ACTION STEPS below in order. For each step:
+   a. Look at the screenshot to understand the current page
+   b. Identify the element or area the step refers to
+   c. Execute the action (click, fill, navigate)
+   d. Check the next screenshot to verify it worked
+   e. If it didn't work, try a different selector or approach
+4. When you need to find exact selectors, call get_page_state to see element attributes
+5. Call done when you've completed all the steps
 
 ## Key rules
-- Follow the guide instructions literally — do what they say, in the order they say it
-- Use click navigation (clicking links, buttons, menu items) rather than typing URLs directly
-- When looking for elements, use text-based selectors: 'text=Security', 'a:has-text("System Log")', 'button:has-text("Save")'
-- If the page has a sidebar or navigation menu, use it to navigate
-- If a button opens a new panel, dialog, or section, wait for it to load before proceeding
-- Some steps may refer to actions you can't perform (external tools, mobile devices, etc.) — skip those and move to the next step you CAN do in the browser
-- The guide may have [SCREENSHOT: ...] markers — these are just placeholders, ignore them and keep following the instructions
+- Follow the guide steps in order — do what they say
+- Use click navigation, not URL typing
+- Use text-based selectors: 'text=Security', 'a:has-text("System Log")', 'button:has-text("Save")'
+- Use the sidebar/navigation menu visible in the screenshot to navigate
+- If a button opens a new panel or dialog, wait for it to load before proceeding
+- Some steps refer to external tools (mobile devices, attack simulators). If you can interact with them in the browser, do so. If not, skip and move to the next browser-based step
+- [SCREENSHOT: ...] markers tell you what page state is needed — make sure you reach that view
 
-## Multi-tab / multi-window support
-Some actions (like clicking "Launch" buttons or links with target=_blank) will open NEW BROWSER TABS. When this happens:
-- Use wait_for_new_tab AFTER clicking a button that opens a new tab — it will automatically switch you to the new tab
-- Use list_tabs to see all open tabs and their URLs
-- Use switch_tab to move between tabs (e.g., go back to the lab guide tab, then switch to the Okta admin tab)
-- After switching tabs, always call get_page_state to see the new tab's content
-- The recording captures frames from whichever tab is currently active
+## Multi-tab support
+- Use wait_for_new_tab AFTER clicking a button that opens a new tab
+- Use list_tabs to see all open tabs
+- Use switch_tab to move between tabs
+- After switching tabs, look at the screenshot to confirm where you are
 
-## Loading states and spinners
-Some actions trigger loading states (progress bars, spinners, "loading..." text). When you see these:
-- Call wait with 5000-15000 milliseconds to let the content load
-- Then call get_page_state to check if loading is complete
-- If you still see a loading indicator, wait again
-- Common loading patterns: progress bars, spinning icons, "Loading...", "Please wait...", skeleton screens
+## Loading states
+When you see loading indicators in the screenshot (spinners, progress bars, skeleton screens):
+- Call wait with 3000-10000 milliseconds
+- Check the next screenshot to see if loading completed
+- Repeat if still loading
 
-## Screenshots needed at these points in the guide
+## Screenshots needed at these points
 {marker_pages}
 
-Make sure you reach the pages/views described above during your navigation. The recording system captures a frame at every action, so just being on the right page is sufficient."""
+Make sure you reach EACH of these page views during navigation. The recording system captures frames automatically — just be on the right page."""
 
-        messages = [{"role": "user", "content": f"Navigate through this guide:\n\n{guide_text}"}]
-        litellm_kwargs = {"model": model_id, "messages": messages, "tools": tools, "max_tokens": 4096}
+        # Give the LLM the condensed action steps as primary instructions,
+        # with the full guide as reference context
+        messages = [{"role": "user", "content": f"""Navigate through this lab guide by following the action steps below.
+
+## ACTION STEPS (follow these in order):
+{action_steps}
+
+## FULL GUIDE (for reference context):
+{guide_text}"""}]
+        litellm_kwargs = {"model": model_id, "tools": tools, "max_tokens": 4096}
         if os.environ.get("LITELLM_API_BASE"):
             litellm_kwargs["api_base"] = os.environ["LITELLM_API_BASE"]
             litellm_kwargs["api_key"] = os.environ.get("LITELLM_API_KEY", "")
@@ -336,8 +417,24 @@ Make sure you reach the pages/views described above during your navigation. The 
         for iteration in range(max_iterations):
             self._log(f"nav iteration {iteration + 1}/{max_iterations}")
 
+            # Build call messages: persistent history + ephemeral screenshot
+            call_messages = list(messages)
+            if iteration > 0:
+                # Include a screenshot of the current page so the LLM can SEE it
+                try:
+                    page_b64 = self._capture_page_b64()
+                    call_messages.append({
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": "Here is a screenshot of the current page. Use it to verify your last action and decide what to do next."},
+                            {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{page_b64}"}}
+                        ]
+                    })
+                except Exception as e:
+                    self._log(f"Screenshot for vision failed: {e}")
+
             try:
-                response = completion(**litellm_kwargs, system=system)
+                response = completion(**litellm_kwargs, messages=call_messages, system=system)
             except Exception as e:
                 self._log(f"LLM error: {e}")
                 break
@@ -498,7 +595,6 @@ Make sure you reach the pages/views described above during your navigation. The 
                 tool_results.append({"role": "tool", "tool_call_id": tc.id, "content": result})
 
             messages.extend(tool_results)
-            litellm_kwargs["messages"] = messages
 
             if is_done:
                 break
