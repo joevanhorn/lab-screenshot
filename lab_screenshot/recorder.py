@@ -269,15 +269,20 @@ class GuideRecorder:
 
         # Phase 2: Execute each section
         total_iters_used = 0
-        iters_per_section = max(10, max_iterations // max(len(sections), 1))
+        runnable = [s for s in sections if not s.get("skip_reason")]
+        # Budget: scale per section by step count, minimum 15, cap at 30
+        for s in runnable:
+            n_steps = len(s.get("steps", []))
+            s["_budget"] = min(30, max(15, n_steps * 4))
 
         for i, section in enumerate(sections):
             if section.get("skip_reason"):
                 self._log(f"SKIP section {i+1}/{len(sections)}: {section['title']} — {section['skip_reason']}")
                 continue
 
-            self._log(f"=== Section {i+1}/{len(sections)}: {section['title']} ===")
-            iters_used = self._execute_section(section, max_iterations=iters_per_section)
+            budget = section.get("_budget", 20)
+            self._log(f"=== Section {i+1}/{len(sections)}: {section['title']} ({budget} iters) ===")
+            iters_used = self._execute_section(section, max_iterations=budget)
             total_iters_used += iters_used
 
             if total_iters_used >= max_iterations:
@@ -290,15 +295,22 @@ class GuideRecorder:
         """Phase 1: LLM reads the guide and produces a structured execution plan."""
         marker_list = "\n".join(f"  [{m.index}] {m.description}" for m in markers)
 
-        prompt = f"""Read this lab guide and break it into executable sections for a browser automation agent.
+        prompt = f"""Read this lab guide carefully and break it into executable sections for a browser automation agent.
+
+You are planning for an agent that controls a browser with multiple tabs open. The agent can see screenshots, click elements, fill forms, and switch between tabs. It CANNOT interact with content inside embedded remote desktops or virtual machines (those are just images in the browser).
 
 For each section, identify:
 1. **title**: Short descriptive name
 2. **goal**: What should be accomplished (1-2 sentences)
-3. **steps**: Specific browser actions needed (click X, navigate to Y, fill in Z, observe W)
-4. **success_looks_like**: How to know this section is DONE — what should be visible on screen
-5. **screenshot_markers**: Which marker indices should be captured during this section (can be empty)
-6. **skip_reason**: Set to a string like "requires mobile device" if the section can't be done in a browser. Set to null if it CAN be done.
+3. **context**: WHERE does this section take place? Read the guide instructions to determine this. Examples:
+   - "Lab guide page — the simulator/tool panel on the right side of the guide"
+   - "Admin Console — navigate via sidebar menu"
+   - "Same page as previous section"
+   Think about which tab or page the instructions refer to. If the guide says "From the Admin Console, go to..." then context is the Admin Console tab. If the guide says "From Tech{{Camp}} - Attack Simulator..." then context is the lab guide page where the simulator panel lives.
+4. **steps**: Specific browser actions needed (click X, navigate to Y, fill in Z, observe W)
+5. **success_looks_like**: How to know this section is DONE — what should be visible on screen
+6. **screenshot_markers**: Which marker indices should be captured during this section (can be empty)
+7. **skip_reason**: Set to a string if the section can't be done in a standard browser (requires mobile device, physical equipment, or interacting INSIDE a virtual desktop). Set to null if it CAN be done.
 
 ## Screenshot markers in the guide:
 {marker_list}
@@ -306,15 +318,12 @@ For each section, identify:
 ## Rules:
 - Group related steps by guide heading/section
 - Each section needs a CLEAR, OBSERVABLE completion condition
-- Some steps involve external tools (mobile devices, physical equipment, virtual desktops) — mark those with skip_reason
-- If a section has a button that triggers an async operation (like running a simulation), the steps should include:
-  1. Click the button
-  2. If a confirmation dialog appears, click the confirm/execute button in the dialog
-  3. Wait 5-10 seconds for the operation to complete
-  4. Observe whatever appears on screen — that IS the result, even if it doesn't look dramatic
-- Be specific in steps: "Click the Execute button in the attack simulator panel" not "Run the simulation"
-- For success_looks_like, be PRAGMATIC: if the step is "run an attack", success is "the Execute button has been clicked, any confirmation confirmed, and the page shows the result or returns to its previous state". Do NOT require specific result text you can't know in advance.
+- **Read the guide to determine context.** If the guide says "From the Admin Console, go to Reports > System Log", that section happens in the Admin Console tab. If it says "From Tech{{Camp}} - Brute Force Attack Simulator, Execute the attack", that happens on the lab guide page.
+- Some steps involve external tools (mobile devices, virtual desktops) — mark those with skip_reason
+- If a section triggers an async operation (simulation, API call): click the button, confirm any dialog, wait for results, observe
+- For success_looks_like, be PRAGMATIC — don't require specific result text you can't know in advance
 - Assign each screenshot marker to exactly one section
+- When the same tool/panel appears in multiple sections (e.g., running the same simulator twice), make sure the context is correct for each occurrence
 
 ## Condensed action steps:
 {action_steps}
@@ -323,7 +332,7 @@ For each section, identify:
 {guide_text}
 
 Respond with ONLY a JSON object:
-{{"sections": [{{"title": "...", "goal": "...", "steps": ["..."], "success_looks_like": "...", "screenshot_markers": [0], "skip_reason": null}}, ...]}}"""
+{{"sections": [{{"title": "...", "goal": "...", "context": "...", "steps": ["..."], "success_looks_like": "...", "screenshot_markers": [0], "skip_reason": null}}, ...]}}"""
 
         try:
             response = self._completion(
@@ -347,7 +356,8 @@ Respond with ONLY a JSON object:
             for s in sections:
                 skip = f" [SKIP: {s.get('skip_reason')}]" if s.get('skip_reason') else ""
                 markers_str = s.get('screenshot_markers', [])
-                self._log(f"  • {s['title']}{skip} (markers: {markers_str})")
+                ctx = s.get('context', '')
+                self._log(f"  • {s['title']}{skip} (markers: {markers_str}) — {ctx[:60]}")
 
             return sections
 
@@ -367,13 +377,18 @@ Respond with ONLY a JSON object:
 
         title = section["title"]
         goal = section["goal"]
+        context = section.get("context", "")
         steps = "\n".join(f"  {i+1}. {s}" for i, s in enumerate(section["steps"]))
         success = section["success_looks_like"]
+
+        context_instruction = ""
+        if context:
+            context_instruction = f"\n**Where:** {context}\nMake sure you are on the correct tab/page for this section BEFORE executing steps. Use list_tabs and switch_tab if needed.\n"
 
         system = f"""You are a human tester working through a lab guide in a real browser. You think carefully about each step, observe the results of your actions, and adapt when things don't go as expected.
 
 ## YOUR CURRENT TASK
-**Goal:** {goal}
+**Goal:** {goal}{context_instruction}
 **Steps:**
 {steps}
 **Done when:** {success}
