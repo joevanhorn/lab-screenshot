@@ -306,8 +306,13 @@ For each section, identify:
 - Group related steps by guide heading/section
 - Each section needs a CLEAR, OBSERVABLE completion condition
 - Some steps involve external tools (mobile devices, physical equipment, virtual desktops) — mark those with skip_reason
-- If a section has a button that triggers an async operation (like running a simulation), the steps should be: click the button, wait for results, observe the outcome
+- If a section has a button that triggers an async operation (like running a simulation), the steps should include:
+  1. Click the button
+  2. If a confirmation dialog appears, click the confirm/execute button in the dialog
+  3. Wait 5-10 seconds for the operation to complete
+  4. Observe whatever appears on screen — that IS the result, even if it doesn't look dramatic
 - Be specific in steps: "Click the Execute button in the attack simulator panel" not "Run the simulation"
+- For success_looks_like, be PRAGMATIC: if the step is "run an attack", success is "the Execute button has been clicked, any confirmation confirmed, and the page shows the result or returns to its previous state". Do NOT require specific result text you can't know in advance.
 - Assign each screenshot marker to exactly one section
 
 ## Condensed action steps:
@@ -365,7 +370,7 @@ Respond with ONLY a JSON object:
         success = section["success_looks_like"]
         markers = section.get("screenshot_markers", [])
 
-        system = f"""You are a browser automation agent executing ONE section of a lab guide.
+        system = f"""You are a browser automation agent executing ONE section of a lab guide. Think like a human user: read the instructions, understand what needs to happen, execute, verify, and move on.
 
 ## YOUR CURRENT GOAL
 {goal}
@@ -376,24 +381,39 @@ Respond with ONLY a JSON object:
 ## YOU ARE DONE WHEN
 {success}
 
-When you can see the success condition in the screenshot, call section_complete immediately.
+When you can see the success condition in the screenshot — or when you have completed all the steps and the page has responded to your actions — call section_complete.
+
+## HOW TO THINK ABOUT EACH ACTION
+Before acting, reason about:
+1. What am I trying to accomplish in this step?
+2. What should happen after I do this?
+3. How will I know it worked?
+
+After acting, look at the screenshot and ask:
+1. Did something change? (Any change means the action worked)
+2. Is there a dialog, message, or new content showing results?
+3. Have I completed all the steps? If yes → section_complete
+
+## CONFIRMATION DIALOGS
+Many buttons show a confirmation dialog before executing (e.g., "Execute Payload — Click Execute to run it"). This is a TWO-STEP process:
+1. Click the button → confirmation dialog appears
+2. Click the confirm button inside the dialog → action executes, dialog closes
+After step 2, WAIT 3-5 seconds, then observe the result. Do NOT click the original button again. Whatever you see after the dialog closes IS the result.
 
 ## VISUAL FEEDBACK
-After every action, you receive a screenshot. Use it to:
-- Verify your action worked (did the page change?)
-- Understand the layout (sidebar, main content, panels, dialogs)
-- Check if the success condition is met
-- Find the right elements for the next step
+After every action, you receive a screenshot. This is your primary tool for understanding what happened:
+- If the page looks different from before → your action worked
+- If a dialog appeared → read it and interact with it
+- If the page looks the same but your action didn't error → the action completed silently, move on
 
 ## RULES
-- Execute steps in order. After each action, check the screenshot.
+- Execute steps in order
 - Use click-based navigation: 'text=Security', 'button:has-text("Save")', 'a:has-text("Reports")'
-- Use get_page_state when you need exact selectors (name/id attributes)
-- NEVER click the same button twice — if you clicked it and the page changed, it worked
-- If a button triggers an operation (simulation, save, etc.), click ONCE, wait 3-5 seconds, then observe results
+- Use get_page_state when you need exact selectors
+- NEVER click the same button twice — it already worked the first time
 - If a step can't be done in the browser (external tool, mobile device), skip it
-- If you're stuck, try get_page_state or get_page_text to understand what's on screen
-- Call section_complete as soon as the success condition is visible
+- When stuck, use get_page_text to read what's on screen
+- Call section_complete as soon as you've completed the steps — don't keep trying for a "perfect" result
 
 ## IMPORTANT: Check for open tabs
 Call list_tabs early to see if relevant tabs are already open (admin console, etc.)."""
