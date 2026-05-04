@@ -469,13 +469,47 @@ If you are working in the Okta Admin Console, these patterns will help:
 - The Edit Rule dialog is a SCROLLABLE modal with IF conditions at the top and THEN settings at the bottom
 - Use `scroll(down)` to reach the THEN section — the dialog itself scrolls, not the page behind it
 - The THEN section contains: Access (Denied/Allowed), authentication requirements, MFA settings
+- The "User must authenticate with" dropdown is a custom Selectize control — click the field area to open it, then click the option text (e.g., `text=Password + Another factor`)
+- **IMPORTANT: After changing the required settings, scroll to the bottom and click Save IMMEDIATELY. Do NOT spend iterations reviewing every field — trust that defaults are correct and save.**
 - Save and Cancel buttons are at the very bottom of the dialog
+- Okta may show a confirmation dialog after Save (e.g., "Save anyway") — click it to confirm
+- The admin may be prompted for MFA after saving a security-sensitive change — wait for the human to approve it
 
 **General Scrolling:**
 - Okta uses scrollable content areas, NOT page-level scroll for most lists and dialogs
 - If `scroll(down)` doesn't change what you see, the content area may need a different scroll target
 - For dialogs, scroll targets the dialog automatically
-- For main content, the scroll tool auto-detects the Okta content container"""
+- For main content, the scroll tool auto-detects the Okta content container
+
+## OKTA API REFERENCE (Identity Engine)
+All Okta orgs are Identity Engine (OIE). NEVER use Classic-only APIs. When using browser_api:
+
+**Users:**
+- Find user: `GET /api/v1/users?search=profile.email eq "user@example.com"`
+- Get user: `GET /api/v1/users/{{userId}}`
+
+**Authenticators (OIE replaces classic "Factors"):**
+- List org authenticators: `GET /api/v1/authenticators`
+- The classic `/api/v1/users/{{userId}}/factors` POST may return 403 on OIE orgs
+
+**Enrolling a factor for a user (OIE approach):**
+Since the classic Factors enrollment API may be restricted in OIE, use this sequence:
+1. First check enrolled factors: `GET /api/v1/users/{{userId}}/factors`
+2. If 403 on POST to factors API, try the lifecycle API:
+   - `POST /api/v1/users/{{userId}}/lifecycle/reset_factors` (resets all factors)
+   - Then navigate the user profile in the Admin UI to use "Pre-enrolled authenticators"
+3. Alternative: Use the MyAccount API from a user session (not admin session):
+   - `GET /idp/myaccount/authenticators`
+   - `POST /idp/myaccount/authenticators` with authenticator key
+4. If API enrollment fails, use ask_human to request manual factor enrollment
+
+**Groups:**
+- List groups: `GET /api/v1/groups?q={{name}}`
+- Add user to group: `PUT /api/v1/groups/{{groupId}}/users/{{userId}}`
+
+**Apps:**
+- List apps: `GET /api/v1/apps?q={{name}}`
+- Assign user to app: `POST /api/v1/apps/{{appId}}/users` with `{{"id": "{{userId}}"}}`"""
 
         messages = [{"role": "user", "content": f"Execute this section: **{title}**\n\nGoal: {goal}\n\nSteps:\n{steps}\n\nDone when: {success}"}]
 
