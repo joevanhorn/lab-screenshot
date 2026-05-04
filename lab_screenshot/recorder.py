@@ -59,9 +59,11 @@ class GuideRecorder:
         admin_url: str,
         output_dir: str = "/tmp/lab-screenshot-recording",
         verbose: bool = True,
+        human_input_callback=None,  # Optional: callable(question: str) -> str
     ):
         self.page = page
         self.context = context
+        self._human_input_callback = human_input_callback
         self.admin_url = admin_url.rstrip("/")
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -237,13 +239,14 @@ class GuideRecorder:
         {"name": "navigate", "description": "Navigate to a full URL. Only use when the guide gives you an explicit URL — prefer clicking links/buttons.", "input_schema": {"type": "object", "properties": {"url": {"type": "string"}}, "required": ["url"]}},
         {"name": "click", "description": "Click an element. Use text selectors: 'text=Security', 'button:has-text(\"Save\")', 'a:has-text(\"Reports\")', '[data-se=\"save\"]'. For menus, click the header first, wait, then sub-items.", "input_schema": {"type": "object", "properties": {"selector": {"type": "string"}, "force": {"type": "boolean"}}, "required": ["selector"]}},
         {"name": "fill", "description": "Fill an input. Use get_page_state first to find name/id, then: input[name=\"x\"], input#id.", "input_schema": {"type": "object", "properties": {"selector": {"type": "string"}, "value": {"type": "string"}}, "required": ["selector", "value"]}},
-        {"name": "get_page_state", "description": "Get current URL, title, and visible interactive elements with their selectors.", "input_schema": {"type": "object", "properties": {}}},
+        {"name": "get_page_state", "description": "Get current URL, title, and visible interactive elements with their selectors. If a dialog/modal is open, shows only dialog elements.", "input_schema": {"type": "object", "properties": {}}},
         {"name": "get_page_text", "description": "Get visible text of current page or a CSS-scoped section.", "input_schema": {"type": "object", "properties": {"selector": {"type": "string"}}}},
         {"name": "wait", "description": "Wait milliseconds or for a CSS selector to appear.", "input_schema": {"type": "object", "properties": {"milliseconds": {"type": "integer"}, "selector": {"type": "string"}}}},
         {"name": "list_tabs", "description": "List all open browser tabs.", "input_schema": {"type": "object", "properties": {}}},
         {"name": "switch_tab", "description": "Switch to tab by index. Use list_tabs first.", "input_schema": {"type": "object", "properties": {"tab_index": {"type": "integer"}}, "required": ["tab_index"]}},
         {"name": "wait_for_new_tab", "description": "Wait for a new tab to open after clicking a link/button.", "input_schema": {"type": "object", "properties": {"timeout": {"type": "integer"}}}},
-        {"name": "section_complete", "description": "Signal that the current section's goal has been achieved. Call this when you can see the success condition in the screenshot.", "input_schema": {"type": "object", "properties": {}}},
+        {"name": "section_complete", "description": "Signal that the current section's goal has been achieved. Include a brief reason.", "input_schema": {"type": "object", "properties": {"reason": {"type": "string", "description": "Brief explanation of why this section is complete"}}}},
+        {"name": "ask_human", "description": "Ask the human operator for help when you are genuinely stuck or uncertain. Use this when: you've tried 2-3 approaches and none worked, you're unsure which element to interact with, or you need clarification about what the guide means. Do NOT use this as a first resort — try to solve the problem yourself first.", "input_schema": {"type": "object", "properties": {"question": {"type": "string", "description": "Clear question for the human. Describe what you see, what you tried, and what you need help with."}}, "required": ["question"]}},
     ]
 
     def _drive_with_llm(self, guide_text: str, action_steps: str, markers, max_iterations: int):
@@ -265,8 +268,6 @@ class GuideRecorder:
         sections = self._comprehend_guide(guide_text, action_steps, markers)
 
         # Phase 2: Execute each section
-        # Track actions globally so repeated buttons are blocked across sections
-        global_actions = []
         total_iters_used = 0
         iters_per_section = max(10, max_iterations // max(len(sections), 1))
 
@@ -276,7 +277,7 @@ class GuideRecorder:
                 continue
 
             self._log(f"=== Section {i+1}/{len(sections)}: {section['title']} ===")
-            iters_used = self._execute_section(section, max_iterations=iters_per_section, global_actions=global_actions)
+            iters_used = self._execute_section(section, max_iterations=iters_per_section)
             total_iters_used += iters_used
 
             if total_iters_used >= max_iterations:
@@ -361,67 +362,52 @@ Respond with ONLY a JSON object:
                 "skip_reason": None,
             }]
 
-    def _execute_section(self, section: dict, max_iterations: int = 25, global_actions: list = None) -> int:
+    def _execute_section(self, section: dict, max_iterations: int = 25) -> int:
         """Execute one section of the guide. Returns iterations used."""
 
         title = section["title"]
         goal = section["goal"]
         steps = "\n".join(f"  {i+1}. {s}" for i, s in enumerate(section["steps"]))
         success = section["success_looks_like"]
-        markers = section.get("screenshot_markers", [])
 
-        system = f"""You are a browser automation agent executing ONE section of a lab guide. Think like a human user: read the instructions, understand what needs to happen, execute, verify, and move on.
+        system = f"""You are a human tester working through a lab guide in a real browser. You think carefully about each step, observe the results of your actions, and adapt when things don't go as expected.
 
-## YOUR CURRENT GOAL
-{goal}
-
-## STEPS TO FOLLOW
+## YOUR CURRENT TASK
+**Goal:** {goal}
+**Steps:**
 {steps}
+**Done when:** {success}
 
-## YOU ARE DONE WHEN
-{success}
+## HOW YOU WORK
 
-When you can see the success condition in the screenshot — or when you have completed all the steps and the page has responded to your actions — call section_complete.
+Before EVERY action, think step by step (write your reasoning in your response):
 
-## HOW TO THINK ABOUT EACH ACTION
-Before acting, reason about:
-1. What am I trying to accomplish in this step?
-2. What should happen after I do this?
-3. How will I know it worked?
+1. **Where am I?** Look at the screenshot. What page am I on? What's visible? Is there a dialog, popup, or overlay?
+2. **What step am I on?** Which step from the list above am I working on right now?
+3. **What should I do?** Based on what I see, what's the right next action?
+4. **What do I expect?** After I do this, what should happen? (page changes, dialog appears, content loads, etc.)
 
-After acting, look at the screenshot and ask:
-1. Did something change? (Any change means the action worked)
-2. Is there a dialog, message, or new content showing results?
-3. Have I completed all the steps? If yes → section_complete
+After each action, look at the screenshot you receive and assess:
+- **Did it work?** Compare what you see to what you expected.
+- **Am I done?** Have I completed all the steps? If yes → call section_complete with a brief reason.
+- **Am I stuck?** If the same thing keeps happening, try a completely different approach. If you've tried 2-3 things and nothing works, call ask_human.
 
-## CONFIRMATION DIALOGS
-Many buttons show a confirmation dialog before executing (e.g., "Execute Payload — Click Execute to run it"). This is a TWO-STEP process:
-1. Click the button → confirmation dialog appears
-2. Click the confirm button inside the dialog → action executes, dialog closes
-After step 2, WAIT 3-5 seconds, then observe the result. Do NOT click the original button again. Whatever you see after the dialog closes IS the result.
+## KEY PRINCIPLES
 
-## VISUAL FEEDBACK
-After every action, you receive a screenshot. This is your primary tool for understanding what happened:
-- If the page looks different from before → your action worked
-- If a dialog appeared → read it and interact with it
-- If the page looks the same but your action didn't error → the action completed silently, move on
+- **Observe, don't assume.** Look at the screenshot carefully. Read any text, dialogs, messages, or status indicators.
+- **Actions have consequences.** After you click something, SOMETHING changed — a dialog opened, a page loaded, content updated, or the action completed silently. Look for the change.
+- **Never repeat yourself.** If you clicked a button and the page responded (even by opening a dialog), do NOT click it again. The action worked. Deal with whatever appeared next.
+- **Dialogs need attention.** If a dialog/popup is open, interact with IT — don't try to reach elements behind it. Read the dialog text, then click its buttons (Close, OK, Execute, Save, etc.).
+- **Know when to move on.** You don't need to see perfect results. If you completed the steps and the page has responded, that's enough. Call section_complete.
+- **Ask for help.** If you're genuinely stuck after trying multiple approaches, call ask_human. Describe what you see and what you've tried.
 
-## RULES
-- Execute steps in order
-- Use click-based navigation: 'text=Security', 'button:has-text("Save")', 'a:has-text("Reports")'
-- Use get_page_state when you need exact selectors
-- NEVER click the same button twice — it already worked the first time
-- If a step can't be done in the browser (external tool, mobile device), skip it
-- When stuck, use get_page_text to read what's on screen
-- Call section_complete as soon as you've completed the steps — don't keep trying for a "perfect" result
+## TOOL TIPS
+- Use click with text selectors: `text=Security`, `button:has-text("Save")`, `a:has-text("Reports")`
+- Use get_page_state to discover element selectors (name/id attributes)
+- Call list_tabs early to find tabs the human may have opened during setup
+- Use wait(3000-5000) after actions that trigger async operations"""
 
-## IMPORTANT: Check for open tabs
-Call list_tabs early to see if relevant tabs are already open (admin console, etc.)."""
-
-        messages = [{"role": "user", "content": f"Execute this section: {title}\n\nGoal: {goal}\nSteps:\n{steps}"}]
-
-        # Include global action history so buttons blocked in earlier sections stay blocked
-        recent_actions = list(global_actions) if global_actions else []
+        messages = [{"role": "user", "content": f"Execute this section: **{title}**\n\nGoal: {goal}\n\nSteps:\n{steps}\n\nDone when: {success}"}]
 
         for iteration in range(max_iterations):
             self._log(f"  [{title[:30]}] iteration {iteration + 1}/{max_iterations}")
@@ -431,16 +417,13 @@ Call list_tabs early to see if relevant tabs are already open (admin console, et
             if iteration > 0:
                 try:
                     page_b64 = self._capture_page_b64()
-                    # Check for open dialogs
-                    has_dialog = self.page.evaluate("""() => {
-                        const d = document.querySelector('[role="dialog"]:not([aria-hidden="true"]), .MuiDialog-root, .modal.show, dialog[open]');
-                        if (!d) return null;
-                        return d.innerText.substring(0, 500);
-                    }""")
-                    hint = "Screenshot of the current page."
-                    if has_dialog:
-                        hint += f"\n\n⚠ A DIALOG/MODAL is open over the page. Read its content carefully — it may show results, a form, or a confirmation. The dialog text is:\n\"{has_dialog[:300]}\"\n\nInteract with the dialog (read it, click its buttons like Close/OK/Save) before trying anything behind it."
-                    hint += "\n\nCheck if the success condition is met. If yes, call section_complete. Otherwise, continue with the next step."
+                    # Detect open dialogs and include their text
+                    dialog_text = self.page.evaluate(
+                        '() => { const d = document.querySelector(\'[role="dialog"]:not([aria-hidden="true"]), .MuiDialog-root, .modal.show, dialog[open]\'); return d ? d.innerText.substring(0, 500) : null; }'
+                    )
+                    hint = "Here is the current page. Think about what you see and decide your next action."
+                    if dialog_text:
+                        hint += f'\n\nNote: A dialog/modal is open. Its text: "{dialog_text[:300]}"'
 
                     call_messages.append({
                         "role": "user",
@@ -466,16 +449,24 @@ Call list_tabs early to see if relevant tabs are already open (admin console, et
                 break
 
             message = response.choices[0].message
+
+            # Log any reasoning the LLM wrote
+            if message.content:
+                text = message.content if isinstance(message.content, str) else str(message.content)
+                for line in text.strip().split('\n')[:3]:
+                    self._log(f"  💭 {line[:100]}")
+
             messages.append({"role": "assistant", "content": message.content, "tool_calls": message.tool_calls})
 
             if not message.tool_calls:
+                # LLM responded with text only — might be reasoning before acting, continue
                 break
 
             tool_results = []
             section_done = False
 
             for tc in message.tool_calls:
-                result = self._execute_tool(tc, recent_actions)
+                result = self._execute_tool(tc)
                 if tc.function.name == "section_complete":
                     section_done = True
                 tool_results.append({"role": "tool", "tool_call_id": tc.id, "content": result})
@@ -488,13 +479,9 @@ Call list_tabs early to see if relevant tabs are already open (admin console, et
         else:
             self._log(f"  [{title[:30]}] max iterations reached")
 
-        # Feed section actions back into global history
-        if global_actions is not None:
-            global_actions.extend(recent_actions)
-
         return iteration + 1
 
-    def _execute_tool(self, tc, recent_actions: list) -> str:
+    def _execute_tool(self, tc) -> str:
         """Execute a single tool call. Returns the result string."""
         name = tc.function.name
         try:
@@ -502,37 +489,28 @@ Call list_tabs early to see if relevant tabs are already open (admin console, et
         except json.JSONDecodeError:
             args = {}
 
-        # Stuck detection for click/fill/navigate
-        if name in ("click", "fill", "navigate"):
-            selector = args.get('selector', args.get('url', ''))
-            action_key = f"{name}:{selector[:50]}"
-
-            # Normalize: extract core button/link text for matching
-            # 'button:has-text("Execute")' and 'div[role="dialog"] button:has-text("Execute")'
-            # both normalize to 'click_text:Execute'
-            import re
-            text_match = re.search(r'has-text\(["\']([^"\']+)["\']\)', selector)
-            core_text = text_match.group(1) if text_match else None
-
-            # Count by normalized text (any selector targeting the same text)
-            if core_text and name == "click":
-                norm_count = sum(1 for a in recent_actions if core_text.lower() in a.lower())
-            else:
-                norm_count = recent_actions.count(action_key)
-
-            recent_actions.append(action_key)
-
-            if norm_count >= 2:
-                label = core_text or selector[:40]
-                self._log(f"  BLOCKED ({norm_count}x): {action_key}")
-                return (
-                    f"REFUSED: You have already clicked '{label}' {norm_count} times (with various selectors). "
-                    f"It completed on the first attempt. The result is visible in the screenshot. "
-                    f"Do NOT try again with a different selector — that will also be blocked. "
-                    f"Move to the next step or call section_complete if the goal is achieved."
-                )
-
-        if name == "section_complete":
+        if name == "ask_human":
+            question = args.get("question", "The bot needs help.")
+            self._log(f"  🙋 ASK HUMAN: {question}")
+            # Try to get input from the human
+            try:
+                if self._human_input_callback:
+                    answer = self._human_input_callback(question)
+                else:
+                    # Fallback: print to stderr and read from stdin
+                    print(f"\n🙋 BOT ASKS: {question}", file=sys.stderr)
+                    print("   Type your answer (or press Enter to skip): ", file=sys.stderr, end="", flush=True)
+                    answer = input().strip()
+                    if not answer:
+                        answer = "No answer provided. Use your best judgment and continue."
+            except (EOFError, OSError):
+                answer = "Human input not available. Use your best judgment and continue."
+            self._log(f"  👤 HUMAN: {answer[:100]}")
+            return f"Human response: {answer}"
+        elif name == "section_complete":
+            reason = args.get("reason", "")
+            if reason:
+                self._log(f"  ✓ Reason: {reason[:100]}")
             return "Section marked complete."
         elif name == "navigate":
             url = args.get("url", "")
