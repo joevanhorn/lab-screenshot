@@ -409,10 +409,13 @@ After each action, look at the screenshot you receive and assess:
 
         messages = [{"role": "user", "content": f"Execute this section: **{title}**\n\nGoal: {goal}\n\nSteps:\n{steps}\n\nDone when: {success}"}]
 
+        # Cumulative progress log — tracks what the bot has done and observed
+        progress_log = []
+
         for iteration in range(max_iterations):
             self._log(f"  [{title[:30]}] iteration {iteration + 1}/{max_iterations}")
 
-            # Build messages with ephemeral screenshot
+            # Build messages with ephemeral screenshot + progress summary
             call_messages = list(messages)
             if iteration > 0:
                 try:
@@ -421,14 +424,21 @@ After each action, look at the screenshot you receive and assess:
                     dialog_text = self.page.evaluate(
                         '() => { const d = document.querySelector(\'[role="dialog"]:not([aria-hidden="true"]), .MuiDialog-root, .modal.show, dialog[open]\'); return d ? d.innerText.substring(0, 500) : null; }'
                     )
-                    hint = "Here is the current page. Think about what you see and decide your next action."
+
+                    # Build progress-aware hint
+                    parts = ["Here is the current page."]
                     if dialog_text:
-                        hint += f'\n\nNote: A dialog/modal is open. Its text: "{dialog_text[:300]}"'
+                        parts.append(f'⚠ A DIALOG is open. Text: "{dialog_text[:300]}"')
+                    if progress_log:
+                        parts.append("## YOUR PROGRESS SO FAR")
+                        for entry in progress_log[-8:]:  # Last 8 actions
+                            parts.append(f"- {entry}")
+                    parts.append("\nBased on your progress and what you see, decide your next action. If you have completed all steps, call section_complete.")
 
                     call_messages.append({
                         "role": "user",
                         "content": [
-                            {"type": "text", "text": hint},
+                            {"type": "text", "text": "\n".join(parts)},
                             {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{page_b64}"}}
                         ]
                     })
@@ -467,8 +477,28 @@ After each action, look at the screenshot you receive and assess:
 
             for tc in message.tool_calls:
                 result = self._execute_tool(tc)
-                if tc.function.name == "section_complete":
+                fname = tc.function.name
+                if fname == "section_complete":
                     section_done = True
+
+                # Record progress for actions that change page state
+                if fname in ("click", "fill", "navigate", "switch_tab"):
+                    try:
+                        args = json.loads(tc.function.arguments)
+                    except json.JSONDecodeError:
+                        args = {}
+                    short_result = result[:120]
+                    if fname == "click":
+                        progress_log.append(f"Clicked '{args.get('selector', '')[:50]}' → {short_result}")
+                    elif fname == "fill":
+                        progress_log.append(f"Filled '{args.get('selector', '')[:30]}' with '{args.get('value', '')[:20]}'")
+                    elif fname == "navigate":
+                        progress_log.append(f"Navigated to {args.get('url', '')[:60]}")
+                    elif fname == "switch_tab":
+                        progress_log.append(f"Switched to tab {args.get('tab_index', '?')} → {short_result}")
+                elif fname == "wait":
+                    progress_log.append(f"Waited ({result[:60]})")
+
                 tool_results.append({"role": "tool", "tool_call_id": tc.id, "content": result})
 
             messages.extend(tool_results)
@@ -525,6 +555,24 @@ After each action, look at the screenshot you receive and assess:
         elif name == "click":
             selector = args.get("selector", "")
             force = args.get("force", False)
+            # Auto-scope to dialog if one is open — prevents clicking behind overlays
+            has_dialog = self.page.evaluate(
+                '() => !!document.querySelector(\'[role="dialog"]:not([aria-hidden="true"]), .MuiDialog-root, .modal.show, dialog[open]\')'
+            )
+            if has_dialog:
+                # Try clicking within the dialog first
+                dialog_selector = f'[role="dialog"] {selector}, .MuiDialog-root {selector}, dialog {selector}'
+                try:
+                    self.page.locator(dialog_selector).first.click(force=force, timeout=3000)
+                    self.page.wait_for_timeout(1500)
+                    self.capture_frame(f"click(dialog):{selector[:35]}")
+                    # Check if dialog is now closed
+                    still_open = self.page.evaluate(
+                        '() => !!document.querySelector(\'[role="dialog"]:not([aria-hidden="true"]), .MuiDialog-root, .modal.show, dialog[open]\')'
+                    )
+                    return f"Clicked '{selector}' inside dialog. URL: {self.page.url}" + (" (dialog closed)" if not still_open else " (dialog still open)")
+                except Exception:
+                    pass  # Fall through to normal click if dialog-scoped click fails
             old_page_count = len(self.context.pages)
             try:
                 self.page.locator(selector).first.click(force=force, timeout=8000)
