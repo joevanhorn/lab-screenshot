@@ -237,9 +237,10 @@ class GuideRecorder:
     # -- Browser tool definitions (shared across all execution phases) --
     TOOLS = [
         {"name": "navigate", "description": "Navigate to a full URL. Only use when the guide gives you an explicit URL — prefer clicking links/buttons.", "input_schema": {"type": "object", "properties": {"url": {"type": "string"}}, "required": ["url"]}},
-        {"name": "click", "description": "Click an element. Use text selectors: 'text=Security', 'button:has-text(\"Save\")', 'a:has-text(\"Reports\")', '[data-se=\"save\"]'. For menus, click the header first, wait, then sub-items.", "input_schema": {"type": "object", "properties": {"selector": {"type": "string"}, "force": {"type": "boolean"}}, "required": ["selector"]}},
+        {"name": "click", "description": "Click an element. Use text selectors: 'text=Security', 'button:has-text(\"Save\")', 'a:has-text(\"Reports\")', '[data-se=\"save\"]'. For menus, click the header first, wait, then sub-items. When multiple elements match, use nth= to pick the right one: 'button:has-text(\"Actions\") >> nth=0'.", "input_schema": {"type": "object", "properties": {"selector": {"type": "string"}, "force": {"type": "boolean"}}, "required": ["selector"]}},
         {"name": "fill", "description": "Fill an input. Use get_page_state first to find name/id, then: input[name=\"x\"], input#id.", "input_schema": {"type": "object", "properties": {"selector": {"type": "string"}, "value": {"type": "string"}}, "required": ["selector", "value"]}},
-        {"name": "get_page_state", "description": "Get current URL, title, and visible interactive elements with their selectors. If a dialog/modal is open, shows only dialog elements.", "input_schema": {"type": "object", "properties": {}}},
+        {"name": "scroll", "description": "Scroll the page or a specific element. Use direction 'down' or 'up'. Use this when you need to see content below/above the current viewport, or when an element is not visible.", "input_schema": {"type": "object", "properties": {"direction": {"type": "string", "enum": ["up", "down"], "description": "Scroll direction"}, "pixels": {"type": "integer", "description": "Pixels to scroll. Default 400."}, "selector": {"type": "string", "description": "Optional CSS selector of the element to scroll. Omit for page scroll."}}, "required": ["direction"]}},
+        {"name": "get_page_state", "description": "Get current URL, title, and visible interactive elements with their selectors and row/parent context. If a dialog/modal is open, shows only dialog elements.", "input_schema": {"type": "object", "properties": {}}},
         {"name": "get_page_text", "description": "Get visible text of current page or a CSS-scoped section.", "input_schema": {"type": "object", "properties": {"selector": {"type": "string"}}}},
         {"name": "wait", "description": "Wait milliseconds or for a CSS selector to appear.", "input_schema": {"type": "object", "properties": {"milliseconds": {"type": "integer"}, "selector": {"type": "string"}}}},
         {"name": "list_tabs", "description": "List all open browser tabs.", "input_schema": {"type": "object", "properties": {}}},
@@ -497,7 +498,7 @@ After each action, look at the screenshot you receive and assess:
                     section_done = True
 
                 # Record progress for actions that change page state
-                if fname in ("click", "fill", "navigate", "switch_tab"):
+                if fname in ("click", "fill", "navigate", "switch_tab", "scroll"):
                     try:
                         args = json.loads(tc.function.arguments)
                     except json.JSONDecodeError:
@@ -511,6 +512,8 @@ After each action, look at the screenshot you receive and assess:
                         progress_log.append(f"Navigated to {args.get('url', '')[:60]}")
                     elif fname == "switch_tab":
                         progress_log.append(f"Switched to tab {args.get('tab_index', '?')} → {short_result}")
+                    elif fname == "scroll":
+                        progress_log.append(f"Scrolled {args.get('direction', '?')} {args.get('pixels', 400)}px")
                 elif fname == "wait":
                     progress_log.append(f"Waited ({result[:60]})")
 
@@ -557,6 +560,21 @@ After each action, look at the screenshot you receive and assess:
             if reason:
                 self._log(f"  ✓ Reason: {reason[:100]}")
             return "Section marked complete."
+        elif name == "scroll":
+            direction = args.get("direction", "down")
+            pixels = args.get("pixels", 400)
+            selector = args.get("selector")
+            delta = pixels if direction == "down" else -pixels
+            try:
+                if selector:
+                    self.page.locator(selector).first.evaluate(f"el => el.scrollBy(0, {delta})")
+                else:
+                    self.page.evaluate(f"window.scrollBy(0, {delta})")
+                self.page.wait_for_timeout(500)
+                self.capture_frame(f"scroll:{direction}:{pixels}px")
+                return f"Scrolled {direction} {pixels}px" + (f" on '{selector}'" if selector else "")
+            except Exception as e:
+                return f"Scroll error: {e}"
         elif name == "navigate":
             url = args.get("url", "")
             try:
@@ -630,9 +648,9 @@ After each action, look at the screenshot you receive and assess:
             _GET_ELEMENTS_JS = """(scopeExpr) => {
                 const scope = scopeExpr === 'document' ? document : (document.querySelector('[role="dialog"]:not([aria-hidden="true"]), .MuiDialog-root, .modal.show, dialog[open]') || document);
                 return Array.from(scope.querySelectorAll('a, button, input, select, textarea, [role=button], [role=menuitem], [role=tab], [data-se]'))
-                    .filter(el => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 && r.top < window.innerHeight; })
+                    .filter(el => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 && r.top < window.innerHeight + 200; })
                     .slice(0, 80)
-                    .map(el => {
+                    .map((el, idx) => {
                         const t = el.tagName.toLowerCase();
                         const text = (el.textContent||'').trim().replace(/\\s+/g,' ').substring(0,50);
                         const href = el.getAttribute('href')||'';
@@ -644,6 +662,13 @@ After each action, look at the screenshot you receive and assess:
                         const value = el.value||'';
                         let label = '';
                         if (id) { const lbl = document.querySelector('label[for="'+id+'"]'); if (lbl) label = lbl.textContent.trim().substring(0,40); }
+                        // Row/parent context: find nearest tr, li, or section ancestor
+                        let rowCtx = '';
+                        const row = el.closest('tr, li.o-rule-item, [class*=rule], [class*=row], [data-se]');
+                        if (row && row !== el) {
+                            const rowText = row.textContent.trim().replace(/\\s+/g,' ').substring(0,60);
+                            if (rowText && rowText !== text) rowCtx = ' (in row: "'+rowText+'")';
+                        }
                         let d = t;
                         if (type) d += '[type='+type+']';
                         if (id) d += '#'+id;
@@ -654,6 +679,7 @@ After each action, look at the screenshot you receive and assess:
                         if ((t === 'input' || t === 'textarea' || t === 'select') && value) d += ' value="'+value.substring(0,30)+'"';
                         if (href && href!=='#') d += ' href="'+href.substring(0,60)+'"';
                         if (text && t !== 'input' && t !== 'textarea') d += ' "'+text+'"';
+                        if (rowCtx) d += rowCtx;
                         return d;
                     });
             }"""
