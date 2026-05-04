@@ -880,19 +880,39 @@ Since the classic Factors enrollment API may be restricted in OIE, use this sequ
                         admin_page = p
                         break
 
-                # Build the fetch call
-                fetch_opts = {"method": method, "headers": {"Accept": "application/json", "Content-Type": "application/json"}}
-                if body and method in ("POST", "PUT"):
-                    body_json = json.dumps(body)
+                # Build the fetch call with CSRF token for mutating requests
+                # Okta admin console requires X-Okta-XsrfToken for POST/PUT/DELETE
+                if method in ("POST", "PUT", "DELETE"):
+                    body_json = json.dumps(body) if body else "null"
                     js_code = f"""async () => {{
-                        const resp = await fetch("{path}", {{
-                            method: "{method}",
-                            headers: {{"Accept": "application/json", "Content-Type": "application/json"}},
-                            body: JSON.stringify({body_json})
-                        }});
+                        // Extract CSRF token from cookie or meta tag
+                        const cookies = document.cookie.split(';').map(c => c.trim());
+                        const xsrfCookie = cookies.find(c => c.startsWith('XSRF-TOKEN=') || c.startsWith('okta-csrf-token='));
+                        let xsrfToken = xsrfCookie ? xsrfCookie.split('=').slice(1).join('=') : '';
+                        // Also try meta tag
+                        if (!xsrfToken) {{
+                            const meta = document.querySelector('meta[name="csrf-token"], #csrf-token');
+                            if (meta) xsrfToken = meta.getAttribute('content') || meta.value || '';
+                        }}
+                        // Also try _xsrfToken from okta's internal state
+                        if (!xsrfToken && window._xsrfToken) xsrfToken = window._xsrfToken;
+
+                        const headers = {{
+                            "Accept": "application/json",
+                            "Content-Type": "application/json"
+                        }};
+                        if (xsrfToken) {{
+                            headers["X-Okta-XsrfToken"] = xsrfToken;
+                            headers["X-XSRF-TOKEN"] = xsrfToken;
+                        }}
+
+                        const opts = {{method: "{method}", headers: headers}};
+                        if ({body_json} !== null) opts.body = JSON.stringify({body_json});
+
+                        const resp = await fetch("{path}", opts);
                         const text = await resp.text();
-                        try {{ return {{status: resp.status, data: JSON.parse(text)}}; }}
-                        catch {{ return {{status: resp.status, data: text.substring(0, 2000)}}; }}
+                        try {{ return {{status: resp.status, xsrf: !!xsrfToken, data: JSON.parse(text)}}; }}
+                        catch {{ return {{status: resp.status, xsrf: !!xsrfToken, data: text.substring(0, 2000)}}; }}
                     }}"""
                 else:
                     js_code = f"""async () => {{
@@ -908,14 +928,18 @@ Since the classic Factors enrollment API may be restricted in OIE, use this sequ
                 result = admin_page.evaluate(js_code)
                 status = result.get("status", "?")
                 data = result.get("data", {})
+                had_xsrf = result.get("xsrf", None)
 
                 # Truncate large responses
                 data_str = json.dumps(data, indent=2) if isinstance(data, (dict, list)) else str(data)
                 if len(data_str) > 3000:
                     data_str = data_str[:3000] + "\n... (truncated)"
 
-                self._log(f"  🔌 API response: {status}")
-                return f"API {method} {path} → {status}\n{data_str}"
+                xsrf_note = ""
+                if had_xsrf is not None:
+                    xsrf_note = f" (XSRF token: {'found' if had_xsrf else 'NOT FOUND'})"
+                self._log(f"  🔌 API response: {status}{xsrf_note}")
+                return f"API {method} {path} → {status}{xsrf_note}\n{data_str}"
             except Exception as e:
                 return f"API error: {e}"
         return f"Unknown tool: {name}"
