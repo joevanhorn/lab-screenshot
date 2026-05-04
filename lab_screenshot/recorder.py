@@ -408,10 +408,21 @@ Call list_tabs early to see if relevant tabs are already open (admin console, et
             if iteration > 0:
                 try:
                     page_b64 = self._capture_page_b64()
+                    # Check for open dialogs
+                    has_dialog = self.page.evaluate("""() => {
+                        const d = document.querySelector('[role="dialog"]:not([aria-hidden="true"]), .MuiDialog-root, .modal.show, dialog[open]');
+                        if (!d) return null;
+                        return d.innerText.substring(0, 500);
+                    }""")
+                    hint = "Screenshot of the current page."
+                    if has_dialog:
+                        hint += f"\n\n⚠ A DIALOG/MODAL is open over the page. Read its content carefully — it may show results, a form, or a confirmation. The dialog text is:\n\"{has_dialog[:300]}\"\n\nInteract with the dialog (read it, click its buttons like Close/OK/Save) before trying anything behind it."
+                    hint += "\n\nCheck if the success condition is met. If yes, call section_complete. Otherwise, continue with the next step."
+
                     call_messages.append({
                         "role": "user",
                         "content": [
-                            {"type": "text", "text": "Screenshot of the current page. Check if the success condition is met. If yes, call section_complete. Otherwise, continue with the next step."},
+                            {"type": "text", "text": hint},
                             {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{page_b64}"}}
                         ]
                     })
@@ -522,8 +533,18 @@ Call list_tabs early to see if relevant tabs are already open (admin console, et
             self.capture_frame(f"fill:{selector[:40]}")
             return result
         elif name == "get_page_state":
-            elements = self.page.evaluate("""() => {
-                return Array.from(document.querySelectorAll('a, button, input, select, textarea, [role=button], [role=menuitem], [role=tab], [data-se]'))
+            # Detect open dialog/modal
+            has_dialog = self.page.evaluate(
+                '() => !!document.querySelector(\'[role="dialog"]:not([aria-hidden="true"]), .MuiDialog-root, .modal.show, dialog[open]\')'
+            )
+            # Build element query scoped to dialog if one is open
+            scope_js = (
+                '(document.querySelector(\'[role="dialog"]:not([aria-hidden="true"]), .MuiDialog-root, .modal.show, dialog[open]\') || document)'
+                if has_dialog else 'document'
+            )
+            _GET_ELEMENTS_JS = """(scopeExpr) => {
+                const scope = scopeExpr === 'document' ? document : (document.querySelector('[role="dialog"]:not([aria-hidden="true"]), .MuiDialog-root, .modal.show, dialog[open]') || document);
+                return Array.from(scope.querySelectorAll('a, button, input, select, textarea, [role=button], [role=menuitem], [role=tab], [data-se]'))
                     .filter(el => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 && r.top < window.innerHeight; })
                     .slice(0, 80)
                     .map(el => {
@@ -531,7 +552,7 @@ Call list_tabs early to see if relevant tabs are already open (admin console, et
                         const text = (el.textContent||'').trim().replace(/\\s+/g,' ').substring(0,50);
                         const href = el.getAttribute('href')||'';
                         const se = el.getAttribute('data-se')||'';
-                        const name = el.getAttribute('name')||'';
+                        const nm = el.getAttribute('name')||'';
                         const id = el.getAttribute('id')||'';
                         const type = el.getAttribute('type')||'';
                         const placeholder = el.getAttribute('placeholder')||'';
@@ -541,7 +562,7 @@ Call list_tabs early to see if relevant tabs are already open (admin console, et
                         let d = t;
                         if (type) d += '[type='+type+']';
                         if (id) d += '#'+id;
-                        if (name) d += '[name='+name+']';
+                        if (nm) d += '[name='+nm+']';
                         if (se) d += '[data-se='+se+']';
                         if (label) d += ' label="'+label+'"';
                         if (placeholder) d += ' placeholder="'+placeholder+'"';
@@ -550,8 +571,12 @@ Call list_tabs early to see if relevant tabs are already open (admin console, et
                         if (text && t !== 'input' && t !== 'textarea') d += ' "'+text+'"';
                         return d;
                     });
-            }""")
-            return f"URL: {self.page.url}\nTitle: {self.page.title()}\n\nInteractive elements ({len(elements)}):\n" + "\n".join(f"  - {e}" for e in elements)
+            }"""
+            elements = self.page.evaluate(_GET_ELEMENTS_JS, "dialog" if has_dialog else "document")
+            dialog_note = ""
+            if has_dialog:
+                dialog_note = "\n⚠ A DIALOG/MODAL is open. Elements shown are ONLY from inside the dialog. Read the dialog content and interact with its buttons (Close, OK, Save, etc.) before trying to reach elements behind it.\n"
+            return f"URL: {self.page.url}\nTitle: {self.page.title()}\n{dialog_note}\nInteractive elements ({len(elements)}):\n" + "\n".join(f"  - {e}" for e in elements)
         elif name == "get_page_text":
             selector = args.get("selector")
             try:
