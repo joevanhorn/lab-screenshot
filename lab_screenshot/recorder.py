@@ -421,7 +421,42 @@ After each action, look at the screenshot you receive and assess:
 - Use click with text selectors: `text=Security`, `button:has-text("Save")`, `a:has-text("Reports")`
 - Use get_page_state to discover element selectors (name/id attributes)
 - Call list_tabs early to find tabs the human may have opened during setup
-- Use wait(3000-5000) after actions that trigger async operations"""
+- Use wait(3000-5000) after actions that trigger async operations
+- When multiple elements match the same text, use `>> nth=0` or `>> nth=1` to pick a specific one
+
+## OKTA ADMIN CONSOLE — UI PATTERNS
+If you are working in the Okta Admin Console, these patterns will help:
+
+**Sidebar Navigation (left menu):**
+- The sidebar has collapsible sections: Dashboard, Directory, Customizations, Applications, Identity Governance, Security, Workflow, Reports, Settings
+- Sections with a `>` chevron EXPAND on click to reveal sub-items. Clicking "Security" doesn't navigate — it expands to show: General, HealthInsight, Authenticators, Authentication Policies, etc.
+- After expanding a section, click the specific sub-item you need (e.g., "Authentication Policies")
+- If clicking a sidebar item doesn't navigate, try: first `click` to expand, then look for the sub-item in the screenshot and click it
+- Tip: `get_page_state` will show sidebar items with their `data-se` attributes
+
+**Authentication Policies:**
+- The policy list page (`/admin/authentication-policies/app-sign-in`) shows policies in a scrollable content area
+- To find a specific policy, use `scroll(down)` on the main content, or try clicking it directly — `get_page_state` may show it even if it's below the visible area
+- Each policy opens a rules view with Priority, Rule, Status, and Actions columns
+
+**Policy Rules — Actions Dropdown:**
+- Each rule ROW has its own "Actions ▼" button on the right side
+- There may also be a policy-level "Actions" button at the top — make sure you click the one on the correct ROW
+- Use the row context from `get_page_state` to target the right one: look for `(in row: "1 Employee Access...")`
+- Click "Actions ▼" on the row → dropdown shows: Edit, Activate/Deactivate, Delete
+- Then click "Edit" from the dropdown
+
+**Edit Rule Dialog:**
+- The Edit Rule dialog is a SCROLLABLE modal with IF conditions at the top and THEN settings at the bottom
+- Use `scroll(down)` to reach the THEN section — the dialog itself scrolls, not the page behind it
+- The THEN section contains: Access (Denied/Allowed), authentication requirements, MFA settings
+- Save and Cancel buttons are at the very bottom of the dialog
+
+**General Scrolling:**
+- Okta uses scrollable content areas, NOT page-level scroll for most lists and dialogs
+- If `scroll(down)` doesn't change what you see, the content area may need a different scroll target
+- For dialogs, scroll targets the dialog automatically
+- For main content, the scroll tool auto-detects the Okta content container"""
 
         messages = [{"role": "user", "content": f"Execute this section: **{title}**\n\nGoal: {goal}\n\nSteps:\n{steps}\n\nDone when: {success}"}]
 
@@ -567,12 +602,42 @@ After each action, look at the screenshot you receive and assess:
             delta = pixels if direction == "down" else -pixels
             try:
                 if selector:
+                    # User specified a specific element to scroll
                     self.page.locator(selector).first.evaluate(f"el => el.scrollBy(0, {delta})")
+                    target_desc = f"'{selector}'"
                 else:
-                    self.page.evaluate(f"window.scrollBy(0, {delta})")
+                    # Auto-detect the right scroll target:
+                    # 1. If a dialog/modal is open, scroll the dialog
+                    # 2. If Okta admin content area exists, scroll that
+                    # 3. Fall back to window scroll
+                    target_desc = self.page.evaluate("""(delta) => {
+                        // Priority 1: Open dialog
+                        const dialog = document.querySelector('[role="dialog"]:not([aria-hidden="true"]) .MuiDialogContent-root, [role="dialog"]:not([aria-hidden="true"]), .MuiDialog-root .MuiPaper-root, dialog[open]');
+                        if (dialog && dialog.scrollHeight > dialog.clientHeight) {
+                            dialog.scrollBy(0, delta);
+                            return 'dialog';
+                        }
+                        // Priority 2: Okta admin main content area
+                        const oktaContent = document.querySelector('.admin-app-main-content, .content-area, [class*="content-wrap"], main, [role="main"]');
+                        if (oktaContent && oktaContent.scrollHeight > oktaContent.clientHeight) {
+                            oktaContent.scrollBy(0, delta);
+                            return 'content-area';
+                        }
+                        // Priority 3: Any scrollable container that's not the sidebar
+                        const containers = document.querySelectorAll('div, section');
+                        for (const c of containers) {
+                            if (c.scrollHeight > c.clientHeight + 100 && c.clientHeight > 200 && !c.closest('nav, .sidebar, .sidenav')) {
+                                c.scrollBy(0, delta);
+                                return 'scrollable-div';
+                            }
+                        }
+                        // Fallback: window
+                        window.scrollBy(0, delta);
+                        return 'window';
+                    }""", delta)
                 self.page.wait_for_timeout(500)
                 self.capture_frame(f"scroll:{direction}:{pixels}px")
-                return f"Scrolled {direction} {pixels}px" + (f" on '{selector}'" if selector else "")
+                return f"Scrolled {direction} {pixels}px (target: {target_desc})"
             except Exception as e:
                 return f"Scroll error: {e}"
         elif name == "navigate":
