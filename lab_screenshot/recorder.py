@@ -248,6 +248,7 @@ class GuideRecorder:
         {"name": "wait_for_new_tab", "description": "Wait for a new tab to open after clicking a link/button.", "input_schema": {"type": "object", "properties": {"timeout": {"type": "integer"}}}},
         {"name": "section_complete", "description": "Signal that the current section's goal has been achieved. Include a brief reason.", "input_schema": {"type": "object", "properties": {"reason": {"type": "string", "description": "Brief explanation of why this section is complete"}}}},
         {"name": "ask_human", "description": "Ask the human operator for help when you are genuinely stuck or uncertain. Use this when: you've tried 2-3 approaches and none worked, you're unsure which element to interact with, or you need clarification about what the guide means. Do NOT use this as a first resort — try to solve the problem yourself first.", "input_schema": {"type": "object", "properties": {"question": {"type": "string", "description": "Clear question for the human. Describe what you see, what you tried, and what you need help with."}}, "required": ["question"]}},
+        {"name": "browser_api", "description": "Make an Okta API call using the browser's authenticated admin session. Use this to perform operations that can't be done through the UI (e.g., enrolling a factor for a user when mobile device access is unavailable). The browser's session cookies authenticate the request automatically. Do NOT use this for operations the admin needs to approve via MFA — those must be done through the UI so the human can complete the MFA challenge.", "input_schema": {"type": "object", "properties": {"method": {"type": "string", "enum": ["GET", "POST", "PUT", "DELETE"], "description": "HTTP method"}, "path": {"type": "string", "description": "API path starting with /api/v1/... (e.g., /api/v1/users?search=profile.email eq \"user@example.com\")"}, "body": {"type": "object", "description": "JSON body for POST/PUT requests"}}, "required": ["method", "path"]}},
     ]
 
     def _drive_with_llm(self, guide_text: str, action_steps: str, markers, max_iterations: int):
@@ -270,20 +271,27 @@ class GuideRecorder:
 
         # Phase 2: Execute each section
         total_iters_used = 0
-        runnable = [s for s in sections if not s.get("skip_reason")]
         # Budget: scale per section by step count, minimum 15, cap at 30
-        for s in runnable:
-            n_steps = len(s.get("steps", []))
-            s["_budget"] = min(30, max(15, n_steps * 4))
+        for s in sections:
+            if not s.get("skip_reason") or s.get("api_workaround"):
+                n_steps = len(s.get("steps", []))
+                s["_budget"] = min(30, max(15, n_steps * 4))
 
         for i, section in enumerate(sections):
-            if section.get("skip_reason"):
+            if section.get("skip_reason") and not section.get("api_workaround"):
                 self._log(f"SKIP section {i+1}/{len(sections)}: {section['title']} — {section['skip_reason']}")
                 continue
 
-            budget = section.get("_budget", 20)
-            self._log(f"=== Section {i+1}/{len(sections)}: {section['title']} ({budget} iters) ===")
-            iters_used = self._execute_section(section, max_iterations=budget)
+            if section.get("api_workaround"):
+                # Section can't be done via UI but has an API workaround
+                self._log(f"=== Section {i+1}/{len(sections)}: {section['title']} (API workaround) ===")
+                self._log(f"  Workaround: {section['api_workaround'][:100]}")
+                budget = min(20, section.get("_budget", 15))
+                iters_used = self._execute_section(section, max_iterations=budget)
+            else:
+                budget = section.get("_budget", 20)
+                self._log(f"=== Section {i+1}/{len(sections)}: {section['title']} ({budget} iters) ===")
+                iters_used = self._execute_section(section, max_iterations=budget)
             total_iters_used += iters_used
 
             if total_iters_used >= max_iterations:
@@ -311,7 +319,12 @@ For each section, identify:
 4. **steps**: Specific browser actions needed (click X, navigate to Y, fill in Z, observe W)
 5. **success_looks_like**: How to know this section is DONE — what should be visible on screen
 6. **screenshot_markers**: Which marker indices should be captured during this section (can be empty)
-7. **skip_reason**: Set to a string if the section can't be done in a standard browser (requires mobile device, physical equipment, or interacting INSIDE a virtual desktop). Set to null if it CAN be done.
+7. **skip_reason**: Set ONLY if the section truly cannot be accomplished at all. Set to null in most cases.
+8. **api_workaround**: If a section requires a mobile device or virtual desktop interaction that can't be done in the browser, but the same OUTCOME could be achieved via an Okta API call, describe the API approach here. The agent has a browser_api tool that can make authenticated API calls using the admin session. Common examples:
+   - Enrolling a factor for a user: "Use browser_api to POST /api/v1/users/{{userId}}/factors to enroll a TOTP factor, then activate it"
+   - Assigning an app to a user: "Use browser_api to PUT /api/v1/apps/{{appId}}/users/{{userId}}"
+   Set to null if no workaround is needed (the section can be done via browser UI).
+   NOTE: Do NOT use api_workaround for operations that require admin MFA approval (like saving security policy changes) — those MUST be done through the UI so the human admin can complete the MFA challenge.
 
 ## Screenshot markers in the guide:
 {marker_list}
@@ -320,7 +333,8 @@ For each section, identify:
 - Group related steps by guide heading/section
 - Each section needs a CLEAR, OBSERVABLE completion condition
 - **Read the guide to determine context.** If the guide says "From the Admin Console, go to Reports > System Log", that section happens in the Admin Console tab. If it says "From Tech{{Camp}} - Brute Force Attack Simulator, Execute the attack", that happens on the lab guide page.
-- Some steps involve external tools (mobile devices, virtual desktops) — mark those with skip_reason
+- **Prefer API workarounds over skipping.** If a section requires a mobile device (e.g., enroll Okta Verify, scan QR code) or a virtual desktop, think about whether the same outcome can be achieved via an Okta API call. For example, factor enrollment can be done via `/api/v1/users/{{userId}}/factors`. Only set skip_reason if there is truly no workaround.
+- **Never use api_workaround for admin MFA.** If the guide says "Save and provide MFA if required", that must happen through the UI — the human admin will complete the MFA push.
 - If a section triggers an async operation (simulation, API call): click the button, confirm any dialog, wait for results, observe
 - For success_looks_like, be PRAGMATIC — don't require specific result text you can't know in advance
 - Assign each screenshot marker to exactly one section
@@ -333,7 +347,7 @@ For each section, identify:
 {guide_text}
 
 Respond with ONLY a JSON object:
-{{"sections": [{{"title": "...", "goal": "...", "context": "...", "steps": ["..."], "success_looks_like": "...", "screenshot_markers": [0], "skip_reason": null}}, ...]}}"""
+{{"sections": [{{"title": "...", "goal": "...", "context": "...", "steps": ["..."], "success_looks_like": "...", "screenshot_markers": [0], "skip_reason": null, "api_workaround": null}}, ...]}}"""
 
         try:
             response = self._completion(
@@ -355,10 +369,11 @@ Respond with ONLY a JSON object:
 
             self._log(f"Comprehended guide → {len(sections)} sections:")
             for s in sections:
-                skip = f" [SKIP: {s.get('skip_reason')}]" if s.get('skip_reason') else ""
+                skip = f" [SKIP: {s.get('skip_reason')}]" if s.get('skip_reason') and not s.get('api_workaround') else ""
+                api = " [API WORKAROUND]" if s.get('api_workaround') else ""
                 markers_str = s.get('screenshot_markers', [])
                 ctx = s.get('context', '')
-                self._log(f"  • {s['title']}{skip} (markers: {markers_str}) — {ctx[:60]}")
+                self._log(f"  • {s['title']}{skip}{api} (markers: {markers_str}) — {ctx[:60]}")
 
             return sections
 
@@ -382,9 +397,13 @@ Respond with ONLY a JSON object:
         steps = "\n".join(f"  {i+1}. {s}" for i, s in enumerate(section["steps"]))
         success = section["success_looks_like"]
 
+        api_workaround = section.get("api_workaround")
+
         context_instruction = ""
         if context:
             context_instruction = f"\n**Where:** {context}\nMake sure you are on the correct tab/page for this section BEFORE executing steps. Use list_tabs and switch_tab if needed.\n"
+        if api_workaround:
+            context_instruction += f"\n**⚠ API WORKAROUND:** This section normally requires a mobile device or virtual desktop, but you can achieve the same outcome using the browser_api tool. Approach: {api_workaround}\nUse the browser_api tool to make the necessary API calls. You have full admin API access via the browser session.\n"
 
         system = f"""You are a human tester working through a lab guide in a real browser. You think carefully about each step, observe the results of your actions, and adapt when things don't go as expected.
 
@@ -549,6 +568,8 @@ If you are working in the Okta Admin Console, these patterns will help:
                         progress_log.append(f"Switched to tab {args.get('tab_index', '?')} → {short_result}")
                     elif fname == "scroll":
                         progress_log.append(f"Scrolled {args.get('direction', '?')} {args.get('pixels', 400)}px")
+                elif fname == "browser_api":
+                    progress_log.append(f"API call: {args.get('method', '?')} {args.get('path', '')[:50]} → {result[:80]}")
                 elif fname == "wait":
                     progress_log.append(f"Waited ({result[:60]})")
 
@@ -804,4 +825,55 @@ If you are working in the Okta Admin Console, these patterns will help:
                     return f"Selector '{sel}' not found in {ms}ms"
             self.page.wait_for_timeout(ms)
             return f"Waited {ms}ms"
+        elif name == "browser_api":
+            method = args.get("method", "GET")
+            path = args.get("path", "")
+            body = args.get("body")
+            self._log(f"  🔌 API: {method} {path[:80]}")
+            try:
+                # Find the admin console tab to make the API call from
+                admin_page = self.page
+                for p in self.context.pages:
+                    if "-admin." in p.url or "/admin/" in p.url:
+                        admin_page = p
+                        break
+
+                # Build the fetch call
+                fetch_opts = {"method": method, "headers": {"Accept": "application/json", "Content-Type": "application/json"}}
+                if body and method in ("POST", "PUT"):
+                    body_json = json.dumps(body)
+                    js_code = f"""async () => {{
+                        const resp = await fetch("{path}", {{
+                            method: "{method}",
+                            headers: {{"Accept": "application/json", "Content-Type": "application/json"}},
+                            body: JSON.stringify({body_json})
+                        }});
+                        const text = await resp.text();
+                        try {{ return {{status: resp.status, data: JSON.parse(text)}}; }}
+                        catch {{ return {{status: resp.status, data: text.substring(0, 2000)}}; }}
+                    }}"""
+                else:
+                    js_code = f"""async () => {{
+                        const resp = await fetch("{path}", {{
+                            method: "{method}",
+                            headers: {{"Accept": "application/json"}}
+                        }});
+                        const text = await resp.text();
+                        try {{ return {{status: resp.status, data: JSON.parse(text)}}; }}
+                        catch {{ return {{status: resp.status, data: text.substring(0, 2000)}}; }}
+                    }}"""
+
+                result = admin_page.evaluate(js_code)
+                status = result.get("status", "?")
+                data = result.get("data", {})
+
+                # Truncate large responses
+                data_str = json.dumps(data, indent=2) if isinstance(data, (dict, list)) else str(data)
+                if len(data_str) > 3000:
+                    data_str = data_str[:3000] + "\n... (truncated)"
+
+                self._log(f"  🔌 API response: {status}")
+                return f"API {method} {path} → {status}\n{data_str}"
+            except Exception as e:
+                return f"API error: {e}"
         return f"Unknown tool: {name}"
