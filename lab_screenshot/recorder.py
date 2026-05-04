@@ -537,10 +537,11 @@ Since the classic Factors enrollment API may be restricted in OIE, use this sequ
                     if dialog_text:
                         parts.append(f'⚠ A DIALOG is open. Text: "{dialog_text[:300]}"')
                     if progress_log:
-                        parts.append("## YOUR PROGRESS SO FAR")
-                        for entry in progress_log[-8:]:  # Last 8 actions
+                        parts.append("## YOUR PROGRESS SO FAR (do NOT repeat completed actions)")
+                        for entry in progress_log[-10:]:
                             parts.append(f"- {entry}")
-                    parts.append("\nBased on your progress and what you see, decide your next action. If you have completed all steps, call section_complete.")
+                        parts.append(f"\nYou have taken {len(progress_log)} actions so far. Do NOT repeat actions you have already completed successfully.")
+                    parts.append("\nLook at this screenshot and your progress above. If you have completed all the steps in this section, call section_complete NOW. Do not re-do steps that already succeeded.")
 
                     call_messages.append({
                         "role": "user",
@@ -567,11 +568,15 @@ Since the classic Factors enrollment API may be restricted in OIE, use this sequ
 
             message = response.choices[0].message
 
-            # Log any reasoning the LLM wrote
+            # Log any reasoning the LLM wrote, and capture key observations in progress
             if message.content:
                 text = message.content if isinstance(message.content, str) else str(message.content)
                 for line in text.strip().split('\n')[:3]:
                     self._log(f"  💭 {line[:100]}")
+                # If the bot's reasoning mentions successful completion, record it
+                text_lower = text.lower()
+                if any(kw in text_lower for kw in ['completed successfully', 'simulation completed', 'attack completed', '1/1 successful']):
+                    progress_log.append(f"✅ OBSERVED: Bot confirmed successful completion in its reasoning")
 
             messages.append({"role": "assistant", "content": message.content, "tool_calls": message.tool_calls})
 
