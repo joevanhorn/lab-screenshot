@@ -271,11 +271,11 @@ class GuideRecorder:
 
         # Phase 2: Execute each section
         total_iters_used = 0
-        # Budget: scale per section by step count, minimum 15, cap at 30
+        # Budget: scale per section by step count, minimum 15, cap at 35
         for s in sections:
             if not s.get("skip_reason") or s.get("api_workaround"):
                 n_steps = len(s.get("steps", []))
-                s["_budget"] = min(30, max(15, n_steps * 4))
+                s["_budget"] = min(35, max(15, n_steps * 4))
 
         for i, section in enumerate(sections):
             if section.get("skip_reason") and not section.get("api_workaround"):
@@ -552,24 +552,24 @@ If you are working in the Okta Admin Console, these patterns will help:
                     section_done = True
 
                 # Record progress for actions that change page state
-                if fname in ("click", "fill", "navigate", "switch_tab", "scroll"):
+                if fname in ("click", "fill", "navigate", "switch_tab", "scroll", "browser_api"):
                     try:
-                        args = json.loads(tc.function.arguments)
+                        tc_args = json.loads(tc.function.arguments)
                     except json.JSONDecodeError:
-                        args = {}
+                        tc_args = {}
                     short_result = result[:120]
                     if fname == "click":
-                        progress_log.append(f"Clicked '{args.get('selector', '')[:50]}' → {short_result}")
+                        progress_log.append(f"Clicked '{tc_args.get('selector', '')[:50]}' → {short_result}")
                     elif fname == "fill":
-                        progress_log.append(f"Filled '{args.get('selector', '')[:30]}' with '{args.get('value', '')[:20]}'")
+                        progress_log.append(f"Filled '{tc_args.get('selector', '')[:30]}' with '{tc_args.get('value', '')[:20]}'")
                     elif fname == "navigate":
-                        progress_log.append(f"Navigated to {args.get('url', '')[:60]}")
+                        progress_log.append(f"Navigated to {tc_args.get('url', '')[:60]}")
                     elif fname == "switch_tab":
-                        progress_log.append(f"Switched to tab {args.get('tab_index', '?')} → {short_result}")
+                        progress_log.append(f"Switched to tab {tc_args.get('tab_index', '?')} → {short_result}")
                     elif fname == "scroll":
-                        progress_log.append(f"Scrolled {args.get('direction', '?')} {args.get('pixels', 400)}px")
-                elif fname == "browser_api":
-                    progress_log.append(f"API call: {args.get('method', '?')} {args.get('path', '')[:50]} → {result[:80]}")
+                        progress_log.append(f"Scrolled {tc_args.get('direction', '?')} {tc_args.get('pixels', 400)}px")
+                    elif fname == "browser_api":
+                        progress_log.append(f"API: {tc_args.get('method', '?')} {tc_args.get('path', '')[:50]} → {short_result}")
                 elif fname == "wait":
                     progress_log.append(f"Waited ({result[:60]})")
 
