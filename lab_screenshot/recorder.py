@@ -265,6 +265,8 @@ class GuideRecorder:
         sections = self._comprehend_guide(guide_text, action_steps, markers)
 
         # Phase 2: Execute each section
+        # Track actions globally so repeated buttons are blocked across sections
+        global_actions = []
         total_iters_used = 0
         iters_per_section = max(10, max_iterations // max(len(sections), 1))
 
@@ -274,7 +276,7 @@ class GuideRecorder:
                 continue
 
             self._log(f"=== Section {i+1}/{len(sections)}: {section['title']} ===")
-            iters_used = self._execute_section(section, max_iterations=iters_per_section)
+            iters_used = self._execute_section(section, max_iterations=iters_per_section, global_actions=global_actions)
             total_iters_used += iters_used
 
             if total_iters_used >= max_iterations:
@@ -354,7 +356,7 @@ Respond with ONLY a JSON object:
                 "skip_reason": None,
             }]
 
-    def _execute_section(self, section: dict, max_iterations: int = 25) -> int:
+    def _execute_section(self, section: dict, max_iterations: int = 25, global_actions: list = None) -> int:
         """Execute one section of the guide. Returns iterations used."""
 
         title = section["title"]
@@ -398,7 +400,8 @@ Call list_tabs early to see if relevant tabs are already open (admin console, et
 
         messages = [{"role": "user", "content": f"Execute this section: {title}\n\nGoal: {goal}\nSteps:\n{steps}"}]
 
-        recent_actions = []
+        # Include global action history so buttons blocked in earlier sections stay blocked
+        recent_actions = list(global_actions) if global_actions else []
 
         for iteration in range(max_iterations):
             self._log(f"  [{title[:30]}] iteration {iteration + 1}/{max_iterations}")
@@ -465,6 +468,10 @@ Call list_tabs early to see if relevant tabs are already open (admin console, et
         else:
             self._log(f"  [{title[:30]}] max iterations reached")
 
+        # Feed section actions back into global history
+        if global_actions is not None:
+            global_actions.extend(recent_actions)
+
         return iteration + 1
 
     def _execute_tool(self, tc, recent_actions: list) -> str:
@@ -477,15 +484,32 @@ Call list_tabs early to see if relevant tabs are already open (admin console, et
 
         # Stuck detection for click/fill/navigate
         if name in ("click", "fill", "navigate"):
-            action_key = f"{name}:{args.get('selector', args.get('url', ''))[:50]}"
-            repeat_count = recent_actions.count(action_key)
+            selector = args.get('selector', args.get('url', ''))
+            action_key = f"{name}:{selector[:50]}"
+
+            # Normalize: extract core button/link text for matching
+            # 'button:has-text("Execute")' and 'div[role="dialog"] button:has-text("Execute")'
+            # both normalize to 'click_text:Execute'
+            import re
+            text_match = re.search(r'has-text\(["\']([^"\']+)["\']\)', selector)
+            core_text = text_match.group(1) if text_match else None
+
+            # Count by normalized text (any selector targeting the same text)
+            if core_text and name == "click":
+                norm_count = sum(1 for a in recent_actions if core_text.lower() in a.lower())
+            else:
+                norm_count = recent_actions.count(action_key)
+
             recent_actions.append(action_key)
 
-            if repeat_count >= 3:
-                self._log(f"  BLOCKED ({repeat_count}x): {action_key}")
+            if norm_count >= 2:
+                label = core_text or selector[:40]
+                self._log(f"  BLOCKED ({norm_count}x): {action_key}")
                 return (
-                    f"REFUSED: '{action_key}' already executed {repeat_count} times. "
-                    f"It completed on the first attempt. Move to the next step or call section_complete if the goal is achieved."
+                    f"REFUSED: You have already clicked '{label}' {norm_count} times (with various selectors). "
+                    f"It completed on the first attempt. The result is visible in the screenshot. "
+                    f"Do NOT try again with a different selector — that will also be blocked. "
+                    f"Move to the next step or call section_complete if the goal is achieved."
                 )
 
         if name == "section_complete":
