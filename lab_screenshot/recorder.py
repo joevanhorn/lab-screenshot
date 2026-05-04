@@ -234,6 +234,9 @@ class GuideRecorder:
         png_bytes = self.page.screenshot(type="png")
         return base64.b64encode(png_bytes).decode("ascii")
 
+    # Dialog/modal CSS selector — priority order: Okta SimpleModal (topmost) > MUI > native
+    DIALOG_CSS = '#simplemodal-container, [role="dialog"]:not([aria-hidden="true"]), .MuiDialog-root, .modal.show, dialog[open]'
+
     # -- Browser tool definitions (shared across all execution phases) --
     TOOLS = [
         {"name": "navigate", "description": "Navigate to a full URL. Only use when the guide gives you an explicit URL — prefer clicking links/buttons.", "input_schema": {"type": "object", "properties": {"url": {"type": "string"}}, "required": ["url"]}},
@@ -526,7 +529,7 @@ Since the classic Factors enrollment API may be restricted in OIE, use this sequ
                     page_b64 = self._capture_page_b64()
                     # Detect open dialogs and include their text
                     dialog_text = self.page.evaluate(
-                        '() => { const d = document.querySelector(\'[role="dialog"]:not([aria-hidden="true"]), .MuiDialog-root, .modal.show, dialog[open]\'); return d ? d.innerText.substring(0, 500) : null; }'
+                        f'() => {{ const d = document.querySelector(\'{self.DIALOG_CSS}\'); return d ? d.innerText.substring(0, 500) : null; }}'
                     )
 
                     # Build progress-aware hint
@@ -666,8 +669,8 @@ Since the classic Factors enrollment API may be restricted in OIE, use this sequ
                     # 2. If Okta admin content area exists, scroll that
                     # 3. Fall back to window scroll
                     target_desc = self.page.evaluate("""(delta) => {
-                        // Priority 1: Open dialog
-                        const dialog = document.querySelector('[role="dialog"]:not([aria-hidden="true"]) .MuiDialogContent-root, [role="dialog"]:not([aria-hidden="true"]), .MuiDialog-root .MuiPaper-root, dialog[open]');
+                        // Priority 1: Open dialog (SimpleModal first, then MUI, then native)
+                        const dialog = document.querySelector('#simplemodal-container, [role="dialog"]:not([aria-hidden="true"]) .MuiDialogContent-root, [role="dialog"]:not([aria-hidden="true"]), .MuiDialog-root .MuiPaper-root, dialog[open]');
                         if (dialog && dialog.scrollHeight > dialog.clientHeight) {
                             dialog.scrollBy(0, delta);
                             return 'dialog';
@@ -710,18 +713,18 @@ Since the classic Factors enrollment API may be restricted in OIE, use this sequ
             force = args.get("force", False)
             # Auto-scope to dialog if one is open — prevents clicking behind overlays
             has_dialog = self.page.evaluate(
-                '() => !!document.querySelector(\'[role="dialog"]:not([aria-hidden="true"]), .MuiDialog-root, .modal.show, dialog[open]\')'
+                f'() => !!document.querySelector(\'{self.DIALOG_CSS}\')'
             )
             if has_dialog:
                 # Try clicking within the dialog first
-                dialog_selector = f'[role="dialog"] {selector}, .MuiDialog-root {selector}, dialog {selector}'
+                dialog_selector = f'#simplemodal-container {selector}, [role="dialog"] {selector}, .MuiDialog-root {selector}, dialog {selector}'
                 try:
                     self.page.locator(dialog_selector).first.click(force=force, timeout=3000)
                     self.page.wait_for_timeout(1500)
                     self.capture_frame(f"click(dialog):{selector[:35]}")
                     # Check if dialog is now closed
                     still_open = self.page.evaluate(
-                        '() => !!document.querySelector(\'[role="dialog"]:not([aria-hidden="true"]), .MuiDialog-root, .modal.show, dialog[open]\')'
+                        f'() => !!document.querySelector(\'{self.DIALOG_CSS}\')'
                     )
                     return f"Clicked '{selector}' inside dialog. URL: {self.page.url}" + (" (dialog closed)" if not still_open else " (dialog still open)")
                 except Exception:
@@ -758,15 +761,15 @@ Since the classic Factors enrollment API may be restricted in OIE, use this sequ
         elif name == "get_page_state":
             # Detect open dialog/modal
             has_dialog = self.page.evaluate(
-                '() => !!document.querySelector(\'[role="dialog"]:not([aria-hidden="true"]), .MuiDialog-root, .modal.show, dialog[open]\')'
+                f'() => !!document.querySelector(\'{self.DIALOG_CSS}\')'
             )
             # Build element query scoped to dialog if one is open
             scope_js = (
-                '(document.querySelector(\'[role="dialog"]:not([aria-hidden="true"]), .MuiDialog-root, .modal.show, dialog[open]\') || document)'
+                f'(document.querySelector(\'{self.DIALOG_CSS}\') || document)'
                 if has_dialog else 'document'
             )
             _GET_ELEMENTS_JS = """(scopeExpr) => {
-                const scope = scopeExpr === 'document' ? document : (document.querySelector('[role="dialog"]:not([aria-hidden="true"]), .MuiDialog-root, .modal.show, dialog[open]') || document);
+                const scope = scopeExpr === 'document' ? document : (document.querySelector('#simplemodal-container, [role="dialog"]:not([aria-hidden="true"]), .MuiDialog-root, .modal.show, dialog[open]') || document);
                 return Array.from(scope.querySelectorAll('a, button, input, select, textarea, [role=button], [role=menuitem], [role=tab], [data-se]'))
                     .filter(el => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 && r.top < window.innerHeight + 200; })
                     .slice(0, 80)
