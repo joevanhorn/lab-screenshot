@@ -882,33 +882,33 @@ Since the classic Factors enrollment API may be restricted in OIE, use this sequ
                         admin_page = p
                         break
 
-                # Okta API lives on the base domain, not the -admin subdomain
-                # e.g., demo-org-admin.okta.com → demo-org.okta.com
-                api_base = admin_page.evaluate("""() => {
-                    const host = window.location.hostname;
-                    // Convert admin hostname to API hostname
-                    // demo-org-admin.okta.com → demo-org.okta.com
-                    // demo-org-admin.oktapreview.com → demo-org.oktapreview.com
-                    const apiHost = host.replace('-admin.', '.');
-                    return window.location.protocol + '//' + apiHost;
-                }""")
-                self._log(f"  🔌 API base: {api_base}")
+                # Use relative paths on the admin domain — the admin console proxies the API
+                # Cross-origin fetch (admin → base domain) is blocked by CORS
+                api_base = ""
+                self._log(f"  🔌 API via: {admin_page.url[:60]}")
 
-                # Build the fetch call — use absolute URL to the base domain
+                # Build the fetch call — relative URL on same origin
                 if method in ("POST", "PUT", "DELETE"):
                     body_json = json.dumps(body) if body else "null"
                     js_code = f"""async () => {{
-                        // Extract CSRF token from cookie or meta tag
+                        // Extract CSRF token — Okta uses multiple patterns
                         const cookies = document.cookie.split(';').map(c => c.trim());
-                        const xsrfCookie = cookies.find(c => c.startsWith('XSRF-TOKEN=') || c.startsWith('okta-csrf-token='));
-                        let xsrfToken = xsrfCookie ? xsrfCookie.split('=').slice(1).join('=') : '';
-                        // Also try meta tag
+                        let xsrfToken = '';
+                        // Check all cookies for XSRF/CSRF patterns
+                        for (const c of cookies) {{
+                            const [name, ...vals] = c.split('=');
+                            const val = vals.join('=');
+                            if (name.match(/xsrf|csrf/i) && val) {{ xsrfToken = val; break; }}
+                        }}
+                        // Try meta tag
                         if (!xsrfToken) {{
-                            const meta = document.querySelector('meta[name="csrf-token"], #csrf-token');
+                            const meta = document.querySelector('meta[name="csrf-token"], meta[name="_csrf"], #csrf-token, input[name="_csrf"]');
                             if (meta) xsrfToken = meta.getAttribute('content') || meta.value || '';
                         }}
-                        // Also try _xsrfToken from okta's internal state
+                        // Try Okta's internal state
                         if (!xsrfToken && window._xsrfToken) xsrfToken = window._xsrfToken;
+                        // Try extracting from any existing XHR headers Okta has set
+                        if (!xsrfToken && window.okta && window.okta.token) xsrfToken = window.okta.token;
 
                         const headers = {{
                             "Accept": "application/json",
@@ -919,19 +919,21 @@ Since the classic Factors enrollment API may be restricted in OIE, use this sequ
                             headers["X-XSRF-TOKEN"] = xsrfToken;
                         }}
 
-                        const opts = {{method: "{method}", headers: headers}};
+                        const opts = {{method: "{method}", headers: headers, credentials: "same-origin"}};
                         if ({body_json} !== null) opts.body = JSON.stringify({body_json});
 
-                        const resp = await fetch("{api_base}{path}", opts);
+                        const resp = await fetch("{path}", opts);
                         const text = await resp.text();
-                        try {{ return {{status: resp.status, xsrf: !!xsrfToken, data: JSON.parse(text)}}; }}
-                        catch {{ return {{status: resp.status, xsrf: !!xsrfToken, data: text.substring(0, 2000)}}; }}
+                        const tokenInfo = xsrfToken ? 'found:' + xsrfToken.substring(0,8) + '...' : 'NOT FOUND';
+                        try {{ return {{status: resp.status, xsrf: tokenInfo, data: JSON.parse(text)}}; }}
+                        catch {{ return {{status: resp.status, xsrf: tokenInfo, data: text.substring(0, 2000)}}; }}
                     }}"""
                 else:
                     js_code = f"""async () => {{
-                        const resp = await fetch("{api_base}{path}", {{
+                        const resp = await fetch("{path}", {{
                             method: "{method}",
-                            headers: {{"Accept": "application/json"}}
+                            headers: {{"Accept": "application/json"}},
+                            credentials: "same-origin"
                         }});
                         const text = await resp.text();
                         try {{ return {{status: resp.status, data: JSON.parse(text)}}; }}
@@ -948,9 +950,7 @@ Since the classic Factors enrollment API may be restricted in OIE, use this sequ
                 if len(data_str) > 3000:
                     data_str = data_str[:3000] + "\n... (truncated)"
 
-                xsrf_note = ""
-                if had_xsrf is not None:
-                    xsrf_note = f" (XSRF token: {'found' if had_xsrf else 'NOT FOUND'})"
+                xsrf_note = f" (XSRF: {had_xsrf})" if had_xsrf else ""
                 self._log(f"  🔌 API response: {status}{xsrf_note}")
                 return f"API {method} {path} → {status}{xsrf_note}\n{data_str}"
             except Exception as e:
