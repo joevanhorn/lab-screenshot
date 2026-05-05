@@ -221,7 +221,7 @@ def _run_pipeline(org_url: str, use_chrome: bool):
             context = p.chromium.launch_persistent_context(
                 user_data_dir=profile,
                 headless=False,
-                viewport={"width": 1440, "height": 900},
+                viewport={"width": 1440, "height": 1080},
                 args=["--disable-blink-features=AutomationControlled"],
                 **chrome_kwargs,
             )

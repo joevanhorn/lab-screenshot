@@ -741,7 +741,9 @@ Since the classic Factors enrollment API may be restricted in OIE, use this sequ
                 # Try clicking within the dialog first
                 dialog_selector = f'#simplemodal-container {selector}, [role="dialog"] {selector}, .MuiDialog-root {selector}, dialog {selector}'
                 try:
-                    self.page.locator(dialog_selector).first.click(force=force, timeout=3000)
+                    loc = self.page.locator(dialog_selector).first
+                    loc.scroll_into_view_if_needed(timeout=3000)
+                    loc.click(force=force, timeout=3000)
                     self.page.wait_for_timeout(1500)
                     self.capture_frame(f"click(dialog):{selector[:35]}")
                     # Check if dialog is now closed
@@ -753,7 +755,12 @@ Since the classic Factors enrollment API may be restricted in OIE, use this sequ
                     pass  # Fall through to normal click if dialog-scoped click fails
             old_page_count = len(self.context.pages)
             try:
-                self.page.locator(selector).first.click(force=force, timeout=8000)
+                loc = self.page.locator(selector).first
+                try:
+                    loc.scroll_into_view_if_needed(timeout=3000)
+                except Exception:
+                    pass  # Element might already be visible
+                loc.click(force=force, timeout=8000)
                 self.page.wait_for_timeout(1500)
                 if len(self.context.pages) > old_page_count:
                     new_page = self.context.pages[-1]
@@ -907,65 +914,53 @@ Since the classic Factors enrollment API may be restricted in OIE, use this sequ
             self._log(f"  🔌 API: {method} {path[:80]}")
 
             try:
-                # Strategy 1: If we have an SSWS API key, use it directly via fetch
-                # This is the most reliable approach — no CORS, no CSRF issues
+                # Strategy 1: If we have an SSWS API key, use Python urllib (server-side)
+                # Browser fetch() with SSWS hits CORS — must be server-side
                 if self._okta_api_key:
+                    import urllib.request
+                    import urllib.error
+
                     api_key = self._okta_api_key
-                    # Ensure SSWS prefix
                     if not api_key.startswith("SSWS "):
                         api_key = f"SSWS {api_key}"
 
-                    # Get the base domain from any admin tab
-                    api_origin = ""
-                    for p in self.context.pages:
-                        if "-admin." in p.url:
-                            api_origin = p.evaluate("() => window.location.origin.replace('-admin.', '.')")
-                            break
-                        elif ".okta.com" in p.url and "-admin." not in p.url and "labs." not in p.url and "auth." not in p.url:
-                            api_origin = p.evaluate("() => window.location.origin")
-                            break
-
-                    if not api_origin:
-                        api_origin = self.admin_url.replace("-admin.", ".")
+                    # Get the base domain from the admin URL
+                    api_origin = self.admin_url.replace("-admin.", ".").rstrip("/")
+                    # Ensure it's https
+                    if not api_origin.startswith("http"):
+                        api_origin = f"https://{api_origin}"
 
                     full_url = f"{api_origin}{path}"
                     self._log(f"  🔌 API via SSWS token: {full_url[:80]}")
 
-                    # Use page.evaluate with fetch + Authorization header
-                    body_json = json.dumps(body) if body else "null"
-                    _SSWS_JS = f"""async () => {{
-                        const headers = {{
-                            "Accept": "application/json",
-                            "Content-Type": "application/json",
-                            "Authorization": "{api_key}"
-                        }};
-                        const opts = {{method: "{method}", headers: headers}};
-                        if ("{method}" !== "GET" && {body_json} !== null) opts.body = JSON.stringify({body_json});
-                        try {{
-                            const resp = await fetch("{full_url}", opts);
-                            const text = await resp.text();
-                            try {{ return {{ok: true, status: resp.status, auth: "SSWS", data: JSON.parse(text)}}; }}
-                            catch {{ return {{ok: true, status: resp.status, auth: "SSWS", data: text.substring(0, 2000)}}; }}
-                        }} catch(e) {{
-                            return {{ok: false, error: e.message}};
-                        }}
-                    }}"""
+                    req_body = json.dumps(body).encode() if body and method in ("POST", "PUT") else None
+                    req = urllib.request.Request(full_url, data=req_body, method=method)
+                    req.add_header("Authorization", api_key)
+                    req.add_header("Accept", "application/json")
+                    req.add_header("Content-Type", "application/json")
 
-                    # Execute from any page (SSWS token handles auth, CORS shouldn't apply for same-ish origin)
-                    any_page = self.context.pages[0] if self.context.pages else self.page
-                    result = any_page.evaluate(_SSWS_JS)
+                    try:
+                        with urllib.request.urlopen(req, timeout=15) as resp:
+                            resp_body = resp.read().decode()
+                            status = resp.status
+                    except urllib.error.HTTPError as e:
+                        resp_body = e.read().decode() if e.fp else ""
+                        status = e.code
+                    except Exception as e:
+                        self._log(f"  🔌 SSWS request failed: {e}")
+                        status = 0
+                        resp_body = str(e)
 
-                    if result.get("ok"):
-                        status = result.get("status", "?")
-                        data = result.get("data", {})
-                        data_str = json.dumps(data, indent=2) if isinstance(data, (dict, list)) else str(data)
-                        if len(data_str) > 3000:
-                            data_str = data_str[:3000] + "\n... (truncated)"
-                        self._log(f"  🔌 API response (SSWS): {status}")
-                        return f"API {method} {path} → {status} (via SSWS token)\n{data_str}"
-                    else:
-                        self._log(f"  🔌 SSWS fetch failed: {result.get('error')}")
-                        # Fall through to session-based approach
+                    try:
+                        data = json.loads(resp_body) if resp_body else {}
+                    except json.JSONDecodeError:
+                        data = resp_body[:2000]
+
+                    data_str = json.dumps(data, indent=2) if isinstance(data, (dict, list)) else str(data)
+                    if len(data_str) > 3000:
+                        data_str = data_str[:3000] + "\n... (truncated)"
+                    self._log(f"  🔌 API response (SSWS): {status}")
+                    return f"API {method} {path} → {status} (via SSWS token)\n{data_str}"
 
                 # Strategy 2: Session-based fetch from browser tabs
                 pages_to_try = []
