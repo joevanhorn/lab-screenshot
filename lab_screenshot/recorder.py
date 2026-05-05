@@ -791,15 +791,37 @@ Since the classic Factors enrollment API may be restricted in OIE, use this sequ
             selector = args.get("selector", "")
             value = args.get("value", "")
             try:
-                # Try selecting by label first, then by value
+                # Try Playwright select_option first (works for native <select>)
                 self.page.locator(selector).first.select_option(label=value, timeout=5000)
+                # Also trigger change event for Selectize/custom controls
+                self.page.locator(selector).first.evaluate("el => el.dispatchEvent(new Event('change', {bubbles: true}))")
                 result = f"Selected '{value}' from '{selector}'"
             except Exception:
                 try:
                     self.page.locator(selector).first.select_option(value=value, timeout=5000)
+                    self.page.locator(selector).first.evaluate("el => el.dispatchEvent(new Event('change', {bubbles: true}))")
                     result = f"Selected value '{value}' from '{selector}'"
-                except Exception as e:
-                    result = f"Select error: {e}"
+                except Exception:
+                    # Fallback: use JavaScript to set value and trigger Selectize
+                    try:
+                        self.page.evaluate(f"""(args) => {{
+                            const sel = document.querySelector(args.selector);
+                            if (!sel) return;
+                            // Set native select value
+                            const opts = Array.from(sel.options);
+                            const match = opts.find(o => o.text.includes(args.value) || o.value.includes(args.value));
+                            if (match) {{
+                                sel.value = match.value;
+                                sel.dispatchEvent(new Event('change', {{bubbles: true}}));
+                            }}
+                            // Also update Selectize if present
+                            if (sel.selectize) {{
+                                sel.selectize.setValue(match ? match.value : args.value);
+                            }}
+                        }}""", {"selector": selector, "value": value})
+                        result = f"Selected '{value}' via JS fallback from '{selector}'"
+                    except Exception as e:
+                        result = f"Select error: {e}"
             self.page.wait_for_timeout(1000)
             self.capture_frame(f"select:{selector[:30]}={value[:20]}")
             return result
@@ -924,11 +946,22 @@ Since the classic Factors enrollment API may be restricted in OIE, use this sequ
                     if not api_key.startswith("SSWS "):
                         api_key = f"SSWS {api_key}"
 
-                    # Get the base domain from the admin URL
-                    api_origin = self.admin_url.replace("-admin.", ".").rstrip("/")
-                    # Ensure it's https
-                    if not api_origin.startswith("http"):
-                        api_origin = f"https://{api_origin}"
+                    # Get the base Okta domain from the admin console tab URL
+                    api_origin = ""
+                    for p in self.context.pages:
+                        url = p.url
+                        if "-admin." in url and ".okta.com" in url:
+                            # Extract: https://demo-org-admin.okta.com/... → https://demo-org.okta.com
+                            from urllib.parse import urlparse
+                            parsed = urlparse(url)
+                            base_host = parsed.hostname.replace("-admin.", ".")
+                            api_origin = f"{parsed.scheme}://{base_host}"
+                            break
+                    if not api_origin:
+                        # Fallback: try to derive from admin_url
+                        api_origin = self.admin_url.replace("-admin.", ".").rstrip("/")
+                        if not api_origin.startswith("http"):
+                            api_origin = f"https://{api_origin}"
 
                     full_url = f"{api_origin}{path}"
                     self._log(f"  🔌 API via SSWS token: {full_url[:80]}")
