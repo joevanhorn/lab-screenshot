@@ -874,85 +874,118 @@ Since the classic Factors enrollment API may be restricted in OIE, use this sequ
             path = args.get("path", "")
             body = args.get("body")
             self._log(f"  🔌 API: {method} {path[:80]}")
+
+            # JS for making an API call with CSRF token handling
+            body_json = json.dumps(body) if body else "null"
+            _FETCH_JS = f"""async () => {{
+                const headers = {{"Accept": "application/json", "Content-Type": "application/json"}};
+
+                // Extract CSRF token for mutating requests
+                let xsrfToken = '';
+                if ("{method}" !== "GET") {{
+                    const cookies = document.cookie.split(';').map(c => c.trim());
+                    for (const c of cookies) {{
+                        const [name, ...vals] = c.split('=');
+                        const val = vals.join('=');
+                        if (name.match(/xsrf|csrf/i) && val) {{ xsrfToken = val; break; }}
+                    }}
+                    if (!xsrfToken) {{
+                        const meta = document.querySelector('meta[name="csrf-token"], meta[name="_csrf"], input[name="_csrf"]');
+                        if (meta) xsrfToken = meta.getAttribute('content') || meta.value || '';
+                    }}
+                    if (!xsrfToken && window._xsrfToken) xsrfToken = window._xsrfToken;
+                    if (xsrfToken) {{
+                        headers["X-Okta-XsrfToken"] = xsrfToken;
+                        headers["X-XSRF-TOKEN"] = xsrfToken;
+                    }}
+                }}
+
+                const opts = {{method: "{method}", headers: headers, credentials: "same-origin"}};
+                if ("{method}" !== "GET" && {body_json} !== null) opts.body = JSON.stringify({body_json});
+
+                try {{
+                    const resp = await fetch("{path}", opts);
+                    const text = await resp.text();
+                    const tokenInfo = xsrfToken ? 'found:' + xsrfToken.substring(0,8) + '...' : (("{method}" === "GET") ? 'n/a' : 'NOT FOUND');
+                    try {{ return {{ok: true, status: resp.status, xsrf: tokenInfo, data: JSON.parse(text)}}; }}
+                    catch {{ return {{ok: true, status: resp.status, xsrf: tokenInfo, data: text.substring(0, 2000)}}; }}
+                }} catch(e) {{
+                    return {{ok: false, error: e.message}};
+                }}
+            }}"""
+
             try:
-                # Find the admin console tab to make the API call from
-                admin_page = self.page
+                # Build ordered list of tabs to try: admin tab first, then base-domain tab
+                pages_to_try = []
+                admin_page = None
+                base_page = None
                 for p in self.context.pages:
-                    if "-admin." in p.url or "/admin/" in p.url:
+                    url = p.url
+                    if "-admin." in url or "/admin/" in url:
                         admin_page = p
-                        break
+                    elif ".okta.com" in url and "-admin." not in url and "labs." not in url and "auth." not in url:
+                        base_page = p
 
-                # Use relative paths on the admin domain — the admin console proxies the API
-                # Cross-origin fetch (admin → base domain) is blocked by CORS
-                api_base = ""
-                self._log(f"  🔌 API via: {admin_page.url[:60]}")
-
-                # Build the fetch call — relative URL on same origin
-                if method in ("POST", "PUT", "DELETE"):
-                    body_json = json.dumps(body) if body else "null"
-                    js_code = f"""async () => {{
-                        // Extract CSRF token — Okta uses multiple patterns
-                        const cookies = document.cookie.split(';').map(c => c.trim());
-                        let xsrfToken = '';
-                        // Check all cookies for XSRF/CSRF patterns
-                        for (const c of cookies) {{
-                            const [name, ...vals] = c.split('=');
-                            const val = vals.join('=');
-                            if (name.match(/xsrf|csrf/i) && val) {{ xsrfToken = val; break; }}
-                        }}
-                        // Try meta tag
-                        if (!xsrfToken) {{
-                            const meta = document.querySelector('meta[name="csrf-token"], meta[name="_csrf"], #csrf-token, input[name="_csrf"]');
-                            if (meta) xsrfToken = meta.getAttribute('content') || meta.value || '';
-                        }}
-                        // Try Okta's internal state
-                        if (!xsrfToken && window._xsrfToken) xsrfToken = window._xsrfToken;
-                        // Try extracting from any existing XHR headers Okta has set
-                        if (!xsrfToken && window.okta && window.okta.token) xsrfToken = window.okta.token;
-
-                        const headers = {{
-                            "Accept": "application/json",
-                            "Content-Type": "application/json"
-                        }};
-                        if (xsrfToken) {{
-                            headers["X-Okta-XsrfToken"] = xsrfToken;
-                            headers["X-XSRF-TOKEN"] = xsrfToken;
-                        }}
-
-                        const opts = {{method: "{method}", headers: headers, credentials: "same-origin"}};
-                        if ({body_json} !== null) opts.body = JSON.stringify({body_json});
-
-                        const resp = await fetch("{path}", opts);
-                        const text = await resp.text();
-                        const tokenInfo = xsrfToken ? 'found:' + xsrfToken.substring(0,8) + '...' : 'NOT FOUND';
-                        try {{ return {{status: resp.status, xsrf: tokenInfo, data: JSON.parse(text)}}; }}
-                        catch {{ return {{status: resp.status, xsrf: tokenInfo, data: text.substring(0, 2000)}}; }}
-                    }}"""
+                # For mutating requests, prefer base-domain tab (admin doesn't proxy POSTs)
+                # For GETs, admin tab works fine
+                if method == "GET":
+                    if admin_page:
+                        pages_to_try.append(("admin", admin_page))
+                    if base_page:
+                        pages_to_try.append(("base-domain", base_page))
                 else:
-                    js_code = f"""async () => {{
-                        const resp = await fetch("{path}", {{
-                            method: "{method}",
-                            headers: {{"Accept": "application/json"}},
-                            credentials: "same-origin"
-                        }});
-                        const text = await resp.text();
-                        try {{ return {{status: resp.status, data: JSON.parse(text)}}; }}
-                        catch {{ return {{status: resp.status, data: text.substring(0, 2000)}}; }}
-                    }}"""
+                    # POST/PUT/DELETE — base domain first, admin as fallback
+                    if base_page:
+                        pages_to_try.append(("base-domain", base_page))
+                    if admin_page:
+                        pages_to_try.append(("admin", admin_page))
 
-                result = admin_page.evaluate(js_code)
-                status = result.get("status", "?")
-                data = result.get("data", {})
-                had_xsrf = result.get("xsrf", None)
+                    # If no base-domain tab exists, create one from the admin URL
+                    if not base_page and admin_page:
+                        base_url = admin_page.evaluate("() => window.location.origin.replace('-admin.', '.')")
+                        self._log(f"  🔌 Opening base-domain tab: {base_url}")
+                        try:
+                            new_page = self.context.new_page()
+                            new_page.goto(base_url, wait_until="networkidle", timeout=15000)
+                            new_page.wait_for_timeout(2000)
+                            pages_to_try.insert(0, ("base-domain(new)", new_page))
+                        except Exception as e:
+                            self._log(f"  🔌 Failed to open base tab: {e}")
 
-                # Truncate large responses
-                data_str = json.dumps(data, indent=2) if isinstance(data, (dict, list)) else str(data)
-                if len(data_str) > 3000:
-                    data_str = data_str[:3000] + "\n... (truncated)"
+                if not pages_to_try:
+                    pages_to_try.append(("current", self.page))
 
-                xsrf_note = f" (XSRF: {had_xsrf})" if had_xsrf else ""
-                self._log(f"  🔌 API response: {status}{xsrf_note}")
-                return f"API {method} {path} → {status}{xsrf_note}\n{data_str}"
+                # Try each tab until one succeeds
+                for tab_name, page in pages_to_try:
+                    self._log(f"  🔌 Trying {tab_name} tab: {page.url[:60]}")
+                    result = page.evaluate(_FETCH_JS)
+
+                    if not result.get("ok"):
+                        err = result.get("error", "unknown")
+                        self._log(f"  🔌 {tab_name} failed: {err}")
+                        if "fetch" in err.lower() and len(pages_to_try) > 1:
+                            continue  # Try next tab
+                        return f"API error on {tab_name} tab: {err}"
+
+                    status = result.get("status", "?")
+                    data = result.get("data", {})
+                    had_xsrf = result.get("xsrf", None)
+
+                    # If we got a 403 with empty body, might be CSRF — try next tab
+                    if status == 403 and not data and len(pages_to_try) > 1 and tab_name != pages_to_try[-1][0]:
+                        self._log(f"  🔌 {tab_name} got 403 (empty body) — trying next tab")
+                        continue
+
+                    # Success or meaningful error — return it
+                    data_str = json.dumps(data, indent=2) if isinstance(data, (dict, list)) else str(data)
+                    if len(data_str) > 3000:
+                        data_str = data_str[:3000] + "\n... (truncated)"
+
+                    xsrf_note = f" (XSRF: {had_xsrf})" if had_xsrf else ""
+                    self._log(f"  🔌 API response via {tab_name}: {status}{xsrf_note}")
+                    return f"API {method} {path} → {status} (via {tab_name}){xsrf_note}\n{data_str}"
+
+                return f"API error: all tabs failed for {method} {path}"
             except Exception as e:
                 return f"API error: {e}"
         elif name == "inspect_element":
