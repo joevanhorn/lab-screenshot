@@ -242,6 +242,7 @@ class GuideRecorder:
         {"name": "navigate", "description": "Navigate to a full URL. Only use when the guide gives you an explicit URL — prefer clicking links/buttons.", "input_schema": {"type": "object", "properties": {"url": {"type": "string"}}, "required": ["url"]}},
         {"name": "click", "description": "Click an element. Use text selectors: 'text=Security', 'button:has-text(\"Save\")', 'a:has-text(\"Reports\")', '[data-se=\"save\"]'. For menus, click the header first, wait, then sub-items. When multiple elements match, use nth= to pick the right one: 'button:has-text(\"Actions\") >> nth=0'.", "input_schema": {"type": "object", "properties": {"selector": {"type": "string"}, "force": {"type": "boolean"}}, "required": ["selector"]}},
         {"name": "fill", "description": "Fill an input. Use get_page_state first to find name/id, then: input[name=\"x\"], input#id.", "input_schema": {"type": "object", "properties": {"selector": {"type": "string"}, "value": {"type": "string"}}, "required": ["selector", "value"]}},
+        {"name": "select_option", "description": "Select an option from a native <select> dropdown. Use this instead of click for <select> elements. Provide the selector for the <select> and the option value or label.", "input_schema": {"type": "object", "properties": {"selector": {"type": "string", "description": "CSS selector for the <select> element"}, "value": {"type": "string", "description": "The option value or visible label to select"}}, "required": ["selector", "value"]}},
         {"name": "scroll", "description": "Scroll the page or a specific element. Use direction 'down' or 'up'. Use this when you need to see content below/above the current viewport, or when an element is not visible.", "input_schema": {"type": "object", "properties": {"direction": {"type": "string", "enum": ["up", "down"], "description": "Scroll direction"}, "pixels": {"type": "integer", "description": "Pixels to scroll. Default 400."}, "selector": {"type": "string", "description": "Optional CSS selector of the element to scroll. Omit for page scroll."}}, "required": ["direction"]}},
         {"name": "get_page_state", "description": "Get current URL, title, and visible interactive elements with their selectors and row/parent context. If a dialog/modal is open, shows only dialog elements.", "input_schema": {"type": "object", "properties": {}}},
         {"name": "get_page_text", "description": "Get visible text of current page or a CSS-scoped section.", "input_schema": {"type": "object", "properties": {"selector": {"type": "string"}}}},
@@ -478,11 +479,11 @@ If you are working in the Okta Admin Console, these patterns will help:
 - The Edit Rule dialog is a SCROLLABLE modal with IF conditions at the top and THEN settings at the bottom
 - Use `scroll(down, 600)` to skip past the IF section and reach the THEN section
 - The THEN section contains: Access (Denied/Allowed), authentication requirements, MFA settings
-- The "User must authenticate with" dropdown is a **custom Selectize control** (NOT a native select). To change it:
-  1. Click `div.selectize-input` in the THEN section (NOT the one in the IF section!) — use `inspect_element` if unsure which one
-  2. A dropdown appears with options like "Password", "Password + Another factor", etc.
-  3. Click `text=Password + Another factor` to select it
-  4. If you accidentally open the IF section's dropdown, click the selected value to close it, then scroll down to THEN
+- The "User must authenticate with" dropdown may be a **custom Selectize control** OR a **native `<select>`** element. Use `inspect_element` to check.
+  - **If Selectize** (div.selectize-input): Click the field, then click the option text (e.g., `text=Password + Another factor`)
+  - **If native `<select>`**: Use the `select_option` tool: `select_option(selector="select[name='verificationMethod.type']", value="Password + Another factor")`
+  - Use `inspect_element` on the dropdown to determine which type it is
+  - If you accidentally open the IF section's dropdown, click the selected value to close it, then scroll down to THEN
 - **CRITICAL: After changing the dropdown, do these 3 things and NOTHING ELSE:**
   1. `scroll(down, 2000)` — jump straight to the bottom
   2. Click Save (look for `[data-se="save"]`, `button:has-text("Save")`, or `a:has-text("Save")`)
@@ -606,7 +607,7 @@ Since the classic Factors enrollment API may be restricted in OIE, use this sequ
                     section_done = True
 
                 # Record progress for actions that change page state
-                if fname in ("click", "fill", "navigate", "switch_tab", "scroll", "browser_api"):
+                if fname in ("click", "fill", "navigate", "switch_tab", "scroll", "browser_api", "select_option"):
                     try:
                         tc_args = json.loads(tc.function.arguments)
                     except json.JSONDecodeError:
@@ -622,6 +623,8 @@ Since the classic Factors enrollment API may be restricted in OIE, use this sequ
                         progress_log.append(f"Switched to tab {tc_args.get('tab_index', '?')} → {short_result}")
                     elif fname == "scroll":
                         progress_log.append(f"Scrolled {tc_args.get('direction', '?')} {tc_args.get('pixels', 400)}px")
+                    elif fname == "select_option":
+                        progress_log.append(f"Selected '{tc_args.get('value', '')[:30]}' from '{tc_args.get('selector', '')[:30]}'")
                     elif fname == "browser_api":
                         progress_log.append(f"API: {tc_args.get('method', '?')} {tc_args.get('path', '')[:50]} → {short_result}")
                 elif fname == "wait":
@@ -775,6 +778,22 @@ Since the classic Factors enrollment API may be restricted in OIE, use this sequ
                 result = f"Fill error: {e}"
             self.capture_frame(f"fill:{selector[:40]}")
             return result
+        elif name == "select_option":
+            selector = args.get("selector", "")
+            value = args.get("value", "")
+            try:
+                # Try selecting by label first, then by value
+                self.page.locator(selector).first.select_option(label=value, timeout=5000)
+                result = f"Selected '{value}' from '{selector}'"
+            except Exception:
+                try:
+                    self.page.locator(selector).first.select_option(value=value, timeout=5000)
+                    result = f"Selected value '{value}' from '{selector}'"
+                except Exception as e:
+                    result = f"Select error: {e}"
+            self.page.wait_for_timeout(1000)
+            self.capture_frame(f"select:{selector[:30]}={value[:20]}")
+            return result
         elif name == "get_page_state":
             # Detect open dialog/modal
             has_dialog = self.page.evaluate(
@@ -916,7 +935,7 @@ Since the classic Factors enrollment API may be restricted in OIE, use this sequ
                 try {{
                     const resp = await fetch("{path}", opts);
                     const text = await resp.text();
-                    const tokenInfo = xsrfToken ? 'found:' + xsrfToken.substring(0,8) + '...' : (("{method}" === "GET") ? 'n/a' : 'NOT FOUND');
+                    const tokenInfo = xsrfToken ? 'found:' + String(xsrfToken).substring(0,8) + '...' : (("{method}" === "GET") ? 'n/a' : 'NOT FOUND');
                     try {{ return {{ok: true, status: resp.status, xsrf: tokenInfo, data: JSON.parse(text)}}; }}
                     catch {{ return {{ok: true, status: resp.status, xsrf: tokenInfo, data: text.substring(0, 2000)}}; }}
                 }} catch(e) {{
