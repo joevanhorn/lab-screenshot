@@ -252,6 +252,7 @@ class GuideRecorder:
         {"name": "section_complete", "description": "Signal that the current section's goal has been achieved. Include a brief reason.", "input_schema": {"type": "object", "properties": {"reason": {"type": "string", "description": "Brief explanation of why this section is complete"}}}},
         {"name": "ask_human", "description": "Ask the human operator for help when you are genuinely stuck or uncertain. Use this when: you've tried 2-3 approaches and none worked, you're unsure which element to interact with, or you need clarification about what the guide means. Do NOT use this as a first resort — try to solve the problem yourself first.", "input_schema": {"type": "object", "properties": {"question": {"type": "string", "description": "Clear question for the human. Describe what you see, what you tried, and what you need help with."}}, "required": ["question"]}},
         {"name": "browser_api", "description": "Make an Okta API call using the browser's authenticated admin session. Use this to perform operations that can't be done through the UI (e.g., enrolling a factor for a user when mobile device access is unavailable). The browser's session cookies authenticate the request automatically. Do NOT use this for operations the admin needs to approve via MFA — those must be done through the UI so the human can complete the MFA challenge.", "input_schema": {"type": "object", "properties": {"method": {"type": "string", "enum": ["GET", "POST", "PUT", "DELETE"], "description": "HTTP method"}, "path": {"type": "string", "description": "API path starting with /api/v1/... (e.g., /api/v1/users?search=profile.email eq \"user@example.com\")"}, "body": {"type": "object", "description": "JSON body for POST/PUT requests"}}, "required": ["method", "path"]}},
+        {"name": "inspect_element", "description": "Inspect a DOM element like browser DevTools. Use this when a click isn't working as expected — it reveals the element's actual tag, classes, attributes, whether it's obscured by another element, and suggests better selectors. Helps debug why clicks fail.", "input_schema": {"type": "object", "properties": {"selector": {"type": "string", "description": "Playwright selector for the element to inspect"}}, "required": ["selector"]}},
     ]
 
     def _drive_with_llm(self, guide_text: str, action_steps: str, markers, max_iterations: int):
@@ -437,7 +438,8 @@ After each action, look at the screenshot you receive and assess:
 - **Never repeat yourself.** If you clicked a button and the page responded (even by opening a dialog), do NOT click it again. The action worked. Deal with whatever appeared next.
 - **Dialogs need attention.** If a dialog/popup is open, interact with IT — don't try to reach elements behind it. Read the dialog text, then click its buttons (Close, OK, Execute, Save, etc.).
 - **Know when to move on.** You don't need to see perfect results. If you completed the steps and the page has responded, that's enough. Call section_complete.
-- **Ask for help.** If you're genuinely stuck after trying multiple approaches, call ask_human. Describe what you see and what you've tried.
+- **Debug before giving up.** If a click isn't working, use inspect_element to see the actual DOM — it may be an `<a>` not a `<button>`, or obscured by an overlay. Use this info to try a better selector or force-click.
+- **Ask for help.** If you're genuinely stuck after trying multiple approaches AND inspect_element, call ask_human. Describe what you see and what you've tried.
 
 ## TOOL TIPS
 - Use click with text selectors: `text=Security`, `button:has-text("Save")`, `a:has-text("Reports")`
@@ -942,4 +944,150 @@ Since the classic Factors enrollment API may be restricted in OIE, use this sequ
                 return f"API {method} {path} → {status}{xsrf_note}\n{data_str}"
             except Exception as e:
                 return f"API error: {e}"
+        elif name == "inspect_element":
+            selector = args.get("selector", "")
+            self._log(f"  🔍 Inspecting: {selector[:60]}")
+            try:
+                info = self.page.evaluate("""(selector) => {
+                    const el = document.querySelector(selector) ||
+                        (() => { try { return document.evaluate(selector, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue; } catch(e) { return null; } })();
+                    if (!el) return {found: false, error: 'Element not found with CSS selector: ' + selector};
+
+                    const rect = el.getBoundingClientRect();
+                    const tag = el.tagName.toLowerCase();
+
+                    // Check what element is actually at this position (obstruction check)
+                    const centerX = rect.left + rect.width / 2;
+                    const centerY = rect.top + rect.height / 2;
+                    const topEl = document.elementFromPoint(centerX, centerY);
+                    let obstruction = null;
+                    if (topEl && topEl !== el && !el.contains(topEl)) {
+                        obstruction = {
+                            tag: topEl.tagName.toLowerCase(),
+                            id: topEl.id || null,
+                            classes: topEl.className || null,
+                            text: (topEl.textContent || '').trim().substring(0, 50)
+                        };
+                    }
+
+                    // Parent chain (up to 5 levels)
+                    const parents = [];
+                    let p = el.parentElement;
+                    for (let i = 0; i < 5 && p; i++) {
+                        const pInfo = p.tagName.toLowerCase();
+                        const pId = p.id ? '#' + p.id : '';
+                        const pClass = p.className ? '.' + String(p.className).split(' ').filter(c=>c).slice(0,3).join('.') : '';
+                        const pRole = p.getAttribute('role') ? '[role=' + p.getAttribute('role') + ']' : '';
+                        parents.push(pInfo + pId + pClass + pRole);
+                        p = p.parentElement;
+                    }
+
+                    // Sibling elements
+                    const siblings = [];
+                    if (el.parentElement) {
+                        Array.from(el.parentElement.children).forEach((sib, idx) => {
+                            if (siblings.length < 5) {
+                                const isCurrent = sib === el ? ' ← THIS' : '';
+                                const sibTag = sib.tagName.toLowerCase();
+                                const sibText = (sib.textContent || '').trim().substring(0, 40);
+                                siblings.push(idx + ': ' + sibTag + ' "' + sibText + '"' + isCurrent);
+                            }
+                        });
+                    }
+
+                    // Suggested selectors
+                    const suggestions = [];
+                    if (el.id) suggestions.push('#' + el.id);
+                    if (el.getAttribute('data-se')) suggestions.push('[data-se="' + el.getAttribute('data-se') + '"]');
+                    if (el.getAttribute('data-testid')) suggestions.push('[data-testid="' + el.getAttribute('data-testid') + '"]');
+                    const text = (el.textContent || '').trim();
+                    if (text && text.length < 30) suggestions.push(tag + ':has-text("' + text + '")');
+                    if (el.getAttribute('href')) suggestions.push(tag + '[href="' + el.getAttribute('href') + '"]');
+
+                    return {
+                        found: true,
+                        tag: tag,
+                        id: el.id || null,
+                        classes: el.className || null,
+                        attributes: {
+                            type: el.getAttribute('type'),
+                            role: el.getAttribute('role'),
+                            'data-se': el.getAttribute('data-se'),
+                            href: el.getAttribute('href'),
+                            disabled: el.disabled || null,
+                            'aria-label': el.getAttribute('aria-label'),
+                            'aria-hidden': el.getAttribute('aria-hidden'),
+                        },
+                        text: text.substring(0, 100),
+                        rect: {x: Math.round(rect.x), y: Math.round(rect.y), w: Math.round(rect.width), h: Math.round(rect.height)},
+                        visible: rect.width > 0 && rect.height > 0,
+                        inViewport: rect.top < window.innerHeight && rect.bottom > 0,
+                        obstruction: obstruction,
+                        parentChain: parents,
+                        siblings: siblings,
+                        suggestedSelectors: suggestions,
+                        computedStyle: {
+                            display: getComputedStyle(el).display,
+                            visibility: getComputedStyle(el).visibility,
+                            opacity: getComputedStyle(el).opacity,
+                            pointerEvents: getComputedStyle(el).pointerEvents,
+                            zIndex: getComputedStyle(el).zIndex,
+                        }
+                    };
+                }""", selector)
+
+                if not info.get("found"):
+                    # Try with Playwright locator as fallback
+                    try:
+                        loc = self.page.locator(selector).first
+                        if loc.count() > 0:
+                            tag = loc.evaluate("el => el.tagName.toLowerCase()")
+                            text = loc.evaluate("el => (el.textContent || '').trim().substring(0, 100)")
+                            return f"Element found via Playwright locator but not CSS. Tag: {tag}, Text: '{text}'. Try using Playwright-style selectors like 'text={text}' or '{tag}:has-text(\"{text}\")'."
+                    except Exception:
+                        pass
+                    return f"Element not found: '{selector}'. Try get_page_state to see available elements."
+
+                # Format the inspection report
+                lines = [f"=== Inspecting: {selector} ==="]
+                lines.append(f"Tag: <{info['tag']}> | ID: {info.get('id') or '(none)'} | Classes: {info.get('classes') or '(none)'}")
+                lines.append(f"Text: \"{info.get('text', '')}\"")
+                lines.append(f"Position: ({info['rect']['x']}, {info['rect']['y']}) Size: {info['rect']['w']}x{info['rect']['h']}")
+                lines.append(f"Visible: {info['visible']} | In viewport: {info['inViewport']}")
+
+                attrs = {k: v for k, v in info.get('attributes', {}).items() if v}
+                if attrs:
+                    lines.append(f"Attributes: {attrs}")
+
+                style = info.get('computedStyle', {})
+                if style.get('pointerEvents') == 'none':
+                    lines.append(f"⚠ pointer-events: none — clicks will pass through this element!")
+                if style.get('opacity') == '0':
+                    lines.append(f"⚠ opacity: 0 — element is invisible!")
+                if style.get('display') == 'none':
+                    lines.append(f"⚠ display: none — element is hidden!")
+
+                if info.get('obstruction'):
+                    obs = info['obstruction']
+                    lines.append(f"⚠ OBSTRUCTED by: <{obs['tag']}> id={obs.get('id')} class={obs.get('classes', '')[:50]}")
+                    lines.append(f"  Obstruction text: \"{obs.get('text', '')}\"")
+                    lines.append(f"  → Try click with force=true, or click the obstructing element first")
+                else:
+                    lines.append(f"✓ Not obstructed — element is clickable at its center point")
+
+                lines.append(f"Parent chain: {' > '.join(info.get('parentChain', []))}")
+
+                if info.get('siblings'):
+                    lines.append(f"Siblings in parent:")
+                    for sib in info['siblings']:
+                        lines.append(f"  {sib}")
+
+                if info.get('suggestedSelectors'):
+                    lines.append(f"Suggested selectors:")
+                    for s in info['suggestedSelectors']:
+                        lines.append(f"  - {s}")
+
+                return "\n".join(lines)
+            except Exception as e:
+                return f"Inspect error: {e}"
         return f"Unknown tool: {name}"
