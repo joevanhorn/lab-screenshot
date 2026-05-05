@@ -882,8 +882,19 @@ Since the classic Factors enrollment API may be restricted in OIE, use this sequ
                         admin_page = p
                         break
 
-                # Build the fetch call with CSRF token for mutating requests
-                # Okta admin console requires X-Okta-XsrfToken for POST/PUT/DELETE
+                # Okta API lives on the base domain, not the -admin subdomain
+                # e.g., demo-org-admin.okta.com → demo-org.okta.com
+                api_base = admin_page.evaluate("""() => {
+                    const host = window.location.hostname;
+                    // Convert admin hostname to API hostname
+                    // demo-org-admin.okta.com → demo-org.okta.com
+                    // demo-org-admin.oktapreview.com → demo-org.oktapreview.com
+                    const apiHost = host.replace('-admin.', '.');
+                    return window.location.protocol + '//' + apiHost;
+                }""")
+                self._log(f"  🔌 API base: {api_base}")
+
+                # Build the fetch call — use absolute URL to the base domain
                 if method in ("POST", "PUT", "DELETE"):
                     body_json = json.dumps(body) if body else "null"
                     js_code = f"""async () => {{
@@ -911,14 +922,14 @@ Since the classic Factors enrollment API may be restricted in OIE, use this sequ
                         const opts = {{method: "{method}", headers: headers}};
                         if ({body_json} !== null) opts.body = JSON.stringify({body_json});
 
-                        const resp = await fetch("{path}", opts);
+                        const resp = await fetch("{api_base}{path}", opts);
                         const text = await resp.text();
                         try {{ return {{status: resp.status, xsrf: !!xsrfToken, data: JSON.parse(text)}}; }}
                         catch {{ return {{status: resp.status, xsrf: !!xsrfToken, data: text.substring(0, 2000)}}; }}
                     }}"""
                 else:
                     js_code = f"""async () => {{
-                        const resp = await fetch("{path}", {{
+                        const resp = await fetch("{api_base}{path}", {{
                             method: "{method}",
                             headers: {{"Accept": "application/json"}}
                         }});
