@@ -453,9 +453,14 @@ If you are working in the Okta Admin Console, these patterns will help:
 
 **Sidebar Navigation (left menu):**
 - The sidebar has collapsible sections: Dashboard, Directory, Customizations, Applications, Identity Governance, Security, Workflow, Reports, Settings
-- Sections with a `>` chevron EXPAND on click to reveal sub-items. Clicking "Security" doesn't navigate — it expands to show: General, HealthInsight, Authenticators, Authentication Policies, etc.
-- After expanding a section, click the specific sub-item you need (e.g., "Authentication Policies")
-- If clicking a sidebar item doesn't navigate, try: first `click` to expand, then look for the sub-item in the screenshot and click it
+- Sections with a `>` chevron EXPAND on click to reveal sub-items. Clicking "Security" doesn't navigate — it expands to show sub-items.
+- **IMPORTANT: If a sidebar click doesn't work after 2 attempts, use direct URL navigation instead.** Common admin URLs:
+  - Authentication Policies: `/admin/authentication-policies/app-sign-in`
+  - System Log: `/report/system_log_2`
+  - Dashboard: `/admin/dashboard`
+  - Users/People: `/admin/users`
+  - Applications: `/admin/apps/active`
+  Construct the full URL from the admin domain visible in the address bar.
 - Tip: `get_page_state` will show sidebar items with their `data-se` attributes
 
 **Authentication Policies:**
@@ -464,21 +469,26 @@ If you are working in the Okta Admin Console, these patterns will help:
 - Each policy opens a rules view with Priority, Rule, Status, and Actions columns
 
 **Policy Rules — Actions Dropdown:**
-- Each rule ROW has its own "Actions ▼" button on the right side
-- There may also be a policy-level "Actions" button at the top — make sure you click the one on the correct ROW
-- Use the row context from `get_page_state` to target the right one: look for `(in row: "1 Employee Access...")`
-- Click "Actions ▼" on the row → dropdown shows: Edit, Activate/Deactivate, Delete
-- Then click "Edit" from the dropdown
+- There are TWO types of "Actions" buttons — policy-level (top) and row-level (per rule). You want the ROW-level one.
+- **To click the right Actions button:** Use `a:has-text("Actions") >> nth=0` for the first rule's Actions. If that opens a policy dropdown (showing Clone, Merge, Edit name), close it by clicking elsewhere and try `a:has-text("Actions") >> nth=1`.
+- After the row Actions dropdown opens (showing Edit, Deactivate, Delete), click `text=Edit`
+- If you keep hitting the wrong Actions button, try: navigate away and back, then click `a:has-text("Actions") >> nth=0` again
 
 **Edit Rule Dialog:**
 - The Edit Rule dialog is a SCROLLABLE modal with IF conditions at the top and THEN settings at the bottom
-- Use `scroll(down)` to reach the THEN section — the dialog itself scrolls, not the page behind it
+- Use `scroll(down, 600)` to skip past the IF section and reach the THEN section
 - The THEN section contains: Access (Denied/Allowed), authentication requirements, MFA settings
-- The "User must authenticate with" dropdown is a custom Selectize control — click the field area to open it, then click the option text (e.g., `text=Password + Another factor`)
-- **IMPORTANT: After changing the required settings, scroll to the bottom and click Save IMMEDIATELY. Do NOT spend iterations reviewing every field — trust that defaults are correct and save.**
-- Save and Cancel buttons are at the very bottom of the dialog
-- Okta may show a confirmation dialog after Save (e.g., "Save anyway") — click it to confirm
-- The admin may be prompted for MFA after saving a security-sensitive change — wait for the human to approve it
+- The "User must authenticate with" dropdown is a **custom Selectize control** (NOT a native select). To change it:
+  1. Click `div.selectize-input` in the THEN section (NOT the one in the IF section!) — use `inspect_element` if unsure which one
+  2. A dropdown appears with options like "Password", "Password + Another factor", etc.
+  3. Click `text=Password + Another factor` to select it
+  4. If you accidentally open the IF section's dropdown, click the selected value to close it, then scroll down to THEN
+- **CRITICAL: After changing the dropdown, do these 3 things and NOTHING ELSE:**
+  1. `scroll(down, 2000)` — jump straight to the bottom
+  2. Click Save (look for `[data-se="save"]`, `button:has-text("Save")`, or `a:has-text("Save")`)
+  3. If a "Save anyway" confirmation appears, click it immediately
+  DO NOT scroll through intermediate fields to verify them. Just save.
+- The admin may be prompted for MFA after saving — wait for the human to approve it
 
 **General Scrolling:**
 - Okta uses scrollable content areas, NOT page-level scroll for most lists and dialogs
