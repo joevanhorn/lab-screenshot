@@ -60,10 +60,12 @@ class GuideRecorder:
         output_dir: str = "/tmp/lab-screenshot-recording",
         verbose: bool = True,
         human_input_callback=None,  # Optional: callable(question: str) -> str
+        okta_api_key: str = "",  # Optional: SSWS token for direct API calls
     ):
         self.page = page
         self.context = context
         self._human_input_callback = human_input_callback
+        self._okta_api_key = okta_api_key.strip() if okta_api_key else ""
         self.admin_url = admin_url.rstrip("/")
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -904,47 +906,68 @@ Since the classic Factors enrollment API may be restricted in OIE, use this sequ
             body = args.get("body")
             self._log(f"  🔌 API: {method} {path[:80]}")
 
-            # JS for making an API call with CSRF token handling
-            body_json = json.dumps(body) if body else "null"
-            _FETCH_JS = f"""async () => {{
-                const headers = {{"Accept": "application/json", "Content-Type": "application/json"}};
-
-                // Extract CSRF token for mutating requests
-                let xsrfToken = '';
-                if ("{method}" !== "GET") {{
-                    const cookies = document.cookie.split(';').map(c => c.trim());
-                    for (const c of cookies) {{
-                        const [name, ...vals] = c.split('=');
-                        const val = vals.join('=');
-                        if (name.match(/xsrf|csrf/i) && val) {{ xsrfToken = val; break; }}
-                    }}
-                    if (!xsrfToken) {{
-                        const meta = document.querySelector('meta[name="csrf-token"], meta[name="_csrf"], input[name="_csrf"]');
-                        if (meta) xsrfToken = meta.getAttribute('content') || meta.value || '';
-                    }}
-                    if (!xsrfToken && window._xsrfToken) xsrfToken = window._xsrfToken;
-                    if (xsrfToken) {{
-                        headers["X-Okta-XsrfToken"] = xsrfToken;
-                        headers["X-XSRF-TOKEN"] = xsrfToken;
-                    }}
-                }}
-
-                const opts = {{method: "{method}", headers: headers, credentials: "same-origin"}};
-                if ("{method}" !== "GET" && {body_json} !== null) opts.body = JSON.stringify({body_json});
-
-                try {{
-                    const resp = await fetch("{path}", opts);
-                    const text = await resp.text();
-                    const tokenInfo = xsrfToken ? 'found:' + String(xsrfToken).substring(0,8) + '...' : (("{method}" === "GET") ? 'n/a' : 'NOT FOUND');
-                    try {{ return {{ok: true, status: resp.status, xsrf: tokenInfo, data: JSON.parse(text)}}; }}
-                    catch {{ return {{ok: true, status: resp.status, xsrf: tokenInfo, data: text.substring(0, 2000)}}; }}
-                }} catch(e) {{
-                    return {{ok: false, error: e.message}};
-                }}
-            }}"""
-
             try:
-                # Build ordered list of tabs to try: admin tab first, then base-domain tab
+                # Strategy 1: If we have an SSWS API key, use it directly via fetch
+                # This is the most reliable approach — no CORS, no CSRF issues
+                if self._okta_api_key:
+                    api_key = self._okta_api_key
+                    # Ensure SSWS prefix
+                    if not api_key.startswith("SSWS "):
+                        api_key = f"SSWS {api_key}"
+
+                    # Get the base domain from any admin tab
+                    api_origin = ""
+                    for p in self.context.pages:
+                        if "-admin." in p.url:
+                            api_origin = p.evaluate("() => window.location.origin.replace('-admin.', '.')")
+                            break
+                        elif ".okta.com" in p.url and "-admin." not in p.url and "labs." not in p.url and "auth." not in p.url:
+                            api_origin = p.evaluate("() => window.location.origin")
+                            break
+
+                    if not api_origin:
+                        api_origin = self.admin_url.replace("-admin.", ".")
+
+                    full_url = f"{api_origin}{path}"
+                    self._log(f"  🔌 API via SSWS token: {full_url[:80]}")
+
+                    # Use page.evaluate with fetch + Authorization header
+                    body_json = json.dumps(body) if body else "null"
+                    _SSWS_JS = f"""async () => {{
+                        const headers = {{
+                            "Accept": "application/json",
+                            "Content-Type": "application/json",
+                            "Authorization": "{api_key}"
+                        }};
+                        const opts = {{method: "{method}", headers: headers}};
+                        if ("{method}" !== "GET" && {body_json} !== null) opts.body = JSON.stringify({body_json});
+                        try {{
+                            const resp = await fetch("{full_url}", opts);
+                            const text = await resp.text();
+                            try {{ return {{ok: true, status: resp.status, auth: "SSWS", data: JSON.parse(text)}}; }}
+                            catch {{ return {{ok: true, status: resp.status, auth: "SSWS", data: text.substring(0, 2000)}}; }}
+                        }} catch(e) {{
+                            return {{ok: false, error: e.message}};
+                        }}
+                    }}"""
+
+                    # Execute from any page (SSWS token handles auth, CORS shouldn't apply for same-ish origin)
+                    any_page = self.context.pages[0] if self.context.pages else self.page
+                    result = any_page.evaluate(_SSWS_JS)
+
+                    if result.get("ok"):
+                        status = result.get("status", "?")
+                        data = result.get("data", {})
+                        data_str = json.dumps(data, indent=2) if isinstance(data, (dict, list)) else str(data)
+                        if len(data_str) > 3000:
+                            data_str = data_str[:3000] + "\n... (truncated)"
+                        self._log(f"  🔌 API response (SSWS): {status}")
+                        return f"API {method} {path} → {status} (via SSWS token)\n{data_str}"
+                    else:
+                        self._log(f"  🔌 SSWS fetch failed: {result.get('error')}")
+                        # Fall through to session-based approach
+
+                # Strategy 2: Session-based fetch from browser tabs
                 pages_to_try = []
                 admin_page = None
                 base_page = None
@@ -955,36 +978,28 @@ Since the classic Factors enrollment API may be restricted in OIE, use this sequ
                     elif ".okta.com" in url and "-admin." not in url and "labs." not in url and "auth." not in url:
                         base_page = p
 
-                # For mutating requests, prefer base-domain tab (admin doesn't proxy POSTs)
-                # For GETs, admin tab works fine
-                if method == "GET":
-                    if admin_page:
-                        pages_to_try.append(("admin", admin_page))
-                    if base_page:
-                        pages_to_try.append(("base-domain", base_page))
-                else:
-                    # POST/PUT/DELETE — base domain first, admin as fallback
-                    if base_page:
-                        pages_to_try.append(("base-domain", base_page))
-                    if admin_page:
-                        pages_to_try.append(("admin", admin_page))
+                body_json = json.dumps(body) if body else "null"
+                _FETCH_JS = f"""async () => {{
+                    const headers = {{"Accept": "application/json", "Content-Type": "application/json"}};
+                    const opts = {{method: "{method}", headers: headers, credentials: "same-origin"}};
+                    if ("{method}" !== "GET" && {body_json} !== null) opts.body = JSON.stringify({body_json});
+                    try {{
+                        const resp = await fetch("{path}", opts);
+                        const text = await resp.text();
+                        try {{ return {{ok: true, status: resp.status, data: JSON.parse(text)}}; }}
+                        catch {{ return {{ok: true, status: resp.status, data: text.substring(0, 2000)}}; }}
+                    }} catch(e) {{
+                        return {{ok: false, error: e.message}};
+                    }}
+                }}"""
 
-                    # If no base-domain tab exists, create one from the admin URL
-                    if not base_page and admin_page:
-                        base_url = admin_page.evaluate("() => window.location.origin.replace('-admin.', '.')")
-                        self._log(f"  🔌 Opening base-domain tab: {base_url}")
-                        try:
-                            new_page = self.context.new_page()
-                            new_page.goto(base_url, wait_until="networkidle", timeout=15000)
-                            new_page.wait_for_timeout(2000)
-                            pages_to_try.insert(0, ("base-domain(new)", new_page))
-                        except Exception as e:
-                            self._log(f"  🔌 Failed to open base tab: {e}")
-
+                if admin_page:
+                    pages_to_try.append(("admin", admin_page))
+                if base_page:
+                    pages_to_try.append(("base-domain", base_page))
                 if not pages_to_try:
                     pages_to_try.append(("current", self.page))
 
-                # Try each tab until one succeeds
                 for tab_name, page in pages_to_try:
                     self._log(f"  🔌 Trying {tab_name} tab: {page.url[:60]}")
                     result = page.evaluate(_FETCH_JS)
@@ -992,29 +1007,23 @@ Since the classic Factors enrollment API may be restricted in OIE, use this sequ
                     if not result.get("ok"):
                         err = result.get("error", "unknown")
                         self._log(f"  🔌 {tab_name} failed: {err}")
-                        if "fetch" in err.lower() and len(pages_to_try) > 1:
-                            continue  # Try next tab
-                        return f"API error on {tab_name} tab: {err}"
+                        continue
 
                     status = result.get("status", "?")
                     data = result.get("data", {})
-                    had_xsrf = result.get("xsrf", None)
 
-                    # If we got a 403 with empty body, might be CSRF — try next tab
-                    if status == 403 and not data and len(pages_to_try) > 1 and tab_name != pages_to_try[-1][0]:
-                        self._log(f"  🔌 {tab_name} got 403 (empty body) — trying next tab")
+                    # If 403 with empty body, try next tab
+                    if status == 403 and not data and tab_name != pages_to_try[-1][0]:
+                        self._log(f"  🔌 {tab_name} got 403 — trying next tab")
                         continue
 
-                    # Success or meaningful error — return it
                     data_str = json.dumps(data, indent=2) if isinstance(data, (dict, list)) else str(data)
                     if len(data_str) > 3000:
                         data_str = data_str[:3000] + "\n... (truncated)"
+                    self._log(f"  🔌 API response via {tab_name}: {status}")
+                    return f"API {method} {path} → {status} (via {tab_name} session)\n{data_str}"
 
-                    xsrf_note = f" (XSRF: {had_xsrf})" if had_xsrf else ""
-                    self._log(f"  🔌 API response via {tab_name}: {status}{xsrf_note}")
-                    return f"API {method} {path} → {status} (via {tab_name}){xsrf_note}\n{data_str}"
-
-                return f"API error: all tabs failed for {method} {path}"
+                return f"API error: all tabs failed for {method} {path}. Consider providing an Okta API key in the app UI."
             except Exception as e:
                 return f"API error: {e}"
         elif name == "inspect_element":

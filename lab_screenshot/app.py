@@ -115,6 +115,7 @@ async def start_recording(
     api_base: str = Form(""),
     model: str = Form(""),
     use_chrome: bool = Form(False),
+    okta_api_key: str = Form(""),
 ):
     """Start the record-then-extract pipeline."""
     if _current_job["status"] not in ("idle", "done", "error"):
@@ -127,6 +128,9 @@ async def start_recording(
     os.environ["LITELLM_API_BASE"] = api_base or "https://llm.atko.ai"
     os.environ["LITELLM_API_KEY"] = api_key or "sk-m4Lc0YlvjR0cjmDTR1qrJw"
     os.environ["LLM_MODEL"] = model or "claude-sonnet-4-6"
+
+    # Store Okta API key if provided
+    _current_job["okta_api_key"] = okta_api_key.strip() if okta_api_key else ""
 
     # Reset state
     _current_job["status"] = "setup"
@@ -255,6 +259,7 @@ def _run_pipeline(org_url: str, use_chrome: bool):
                 admin_url=org_url,
                 output_dir=str(recording_dir),
                 verbose=True,
+                okta_api_key=_current_job.get("okta_api_key", ""),
             )
 
             # Redirect recorder logs to our progress
@@ -433,6 +438,12 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; b
                 </select>
             </div>
         </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label>Okta API Key <span style="color:#94a3b8;font-weight:normal">(optional — enables admin API operations like factor enrollment)</span></label>
+                <input type="password" id="okta-api-key" placeholder="SSWS 00abc..." autocomplete="off">
+            </div>
+        </div>
         <input type="hidden" id="llm-provider" value="litellm">
         <input type="hidden" id="api-key" value="sk-m4Lc0YlvjR0cjmDTR1qrJw">
         <input type="hidden" id="api-base" value="https://llm.atko.ai">
@@ -565,6 +576,7 @@ async function startRecording() {
     form.append('api_base', document.getElementById('api-base').value);
     form.append('model', document.getElementById('model').value);
     form.append('use_chrome', document.getElementById('use-chrome').checked);
+    form.append('okta_api_key', document.getElementById('okta-api-key').value);
 
     await fetch('/api/start', { method: 'POST', body: form });
 
