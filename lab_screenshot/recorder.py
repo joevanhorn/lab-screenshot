@@ -488,12 +488,15 @@ If you are working in the Okta Admin Console, these patterns will help:
   3. Then click the option: `.selectize-dropdown.open .option:has-text("Password + Another factor")`
   **DO NOT use `div.selectize-input` without qualifying it** — that will click the IF section dropdown instead.
   If you accidentally open the wrong dropdown, click `text=Any user type` to close it, then try again with the qualified selector.
-- **CRITICAL: After changing the dropdown, do these 3 things and NOTHING ELSE:**
+- **CRITICAL: After changing the dropdown, follow this EXACT sequence:**
   1. `scroll(down, 2000)` — jump straight to the bottom
-  2. Click Save: `[data-se="save"]` or `input[value="Save"]`
-  3. If a "Save anyway" confirmation appears (in a `#simplemodal-container`), click `#simplemodal-container button:has-text("Save anyway")`
-  DO NOT scroll through intermediate fields to verify them. Just save.
-- The admin may be prompted for MFA after saving — wait for the human to approve it
+  2. Click Save: try `input[value="Save"]` or `[data-se="save"]`
+  3. A "Save anyway" confirmation will appear. Click it with: `input[value="Save anyway"]` (it's an input, not a button!)
+  4. After clicking Save anyway, Okta may require **admin MFA step-up authentication** (a push notification). If you see a loading spinner ("•••") or text about "protected action" or "step-up authentication":
+     - Call `ask_human` with: "Please approve the MFA push notification on your device to save the policy change. Let me know when done."
+     - Then `wait(15000)` for the approval to complete
+     - The dialog should close automatically after MFA approval
+  DO NOT scroll through intermediate fields to verify them. DO NOT keep clicking Save — it worked the first time.
 
 **General Scrolling:**
 - Okta uses scrollable content areas, NOT page-level scroll for most lists and dialogs
@@ -512,16 +515,13 @@ All Okta orgs are Identity Engine (OIE). NEVER use Classic-only APIs. When using
 - List org authenticators: `GET /api/v1/authenticators`
 - The classic `/api/v1/users/{{userId}}/factors` POST may return 403 on OIE orgs
 
-**Enrolling a factor for a user (OIE approach):**
-Since the classic Factors enrollment API may be restricted in OIE, use this sequence:
-1. First check enrolled factors: `GET /api/v1/users/{{userId}}/factors`
-2. If 403 on POST to factors API, try the lifecycle API:
-   - `POST /api/v1/users/{{userId}}/lifecycle/reset_factors` (resets all factors)
-   - Then navigate the user profile in the Admin UI to use "Pre-enrolled authenticators"
-3. Alternative: Use the MyAccount API from a user session (not admin session):
-   - `GET /idp/myaccount/authenticators`
-   - `POST /idp/myaccount/authenticators` with authenticator key
-4. If API enrollment fails, use ask_human to request manual factor enrollment
+**Enrolling a TOTP factor for a user:**
+Use the browser_api tool with SSWS token (must be provided in app UI):
+1. Find the user: `GET /api/v1/users?q={{email}}`
+2. Enroll TOTP: `POST /api/v1/users/{{userId}}/factors` with body `{{"factorType": "token:software:totp", "provider": "OKTA"}}`
+3. The system will **auto-activate** the factor — it generates a TOTP code using the sharedSecret and calls the activation endpoint automatically. You don't need to do anything extra.
+4. The response will confirm "Factor enrolled AND activated successfully!"
+5. If enrollment fails with 403, use ask_human to request manual factor enrollment
 
 **Groups:**
 - List groups: `GET /api/v1/groups?q={{name}}`
@@ -553,6 +553,10 @@ Since the classic Factors enrollment API may be restricted in OIE, use this sequ
                     parts = ["Here is the current page."]
                     if dialog_text:
                         parts.append(f'⚠ A DIALOG is open. Text: "{dialog_text[:300]}"')
+                        # Detect admin MFA step-up authentication
+                        dt_lower = dialog_text.lower()
+                        if any(kw in dt_lower for kw in ['protected action', 'step-up', 'step up', 'verification', 'push notification', '•••', '...']):
+                            parts.append('⚠ This appears to be an ADMIN MFA STEP-UP prompt. Call ask_human to request the admin approve the push notification, then wait(15000) for completion.')
                     if progress_log:
                         parts.append("## YOUR PROGRESS SO FAR (do NOT repeat completed actions)")
                         for entry in progress_log[-10:]:
@@ -990,6 +994,40 @@ Since the classic Factors enrollment API may be restricted in OIE, use this sequ
                         data = json.loads(resp_body) if resp_body else {}
                     except json.JSONDecodeError:
                         data = resp_body[:2000]
+
+                    # Auto-activate TOTP factors: if we just enrolled a factor and got
+                    # PENDING_ACTIVATION with a sharedSecret, activate it automatically
+                    if (status == 200 and isinstance(data, dict)
+                            and data.get("status") == "PENDING_ACTIVATION"
+                            and data.get("factorType") == "token:software:totp"):
+                        embedded = data.get("_embedded", {})
+                        activation = embedded.get("activation", {})
+                        shared_secret = activation.get("sharedSecret")
+                        factor_id = data.get("id")
+                        user_match = path.split("/users/")[1].split("/")[0] if "/users/" in path else None
+
+                        if shared_secret and factor_id and user_match:
+                            self._log(f"  🔌 Auto-activating TOTP factor {factor_id} with secret {shared_secret[:4]}...")
+                            try:
+                                import pyotp
+                                totp_code = pyotp.TOTP(shared_secret).now()
+                                activate_url = f"{api_origin}/api/v1/users/{user_match}/factors/{factor_id}/lifecycle/activate"
+                                activate_body = json.dumps({"passCode": totp_code}).encode()
+                                activate_req = urllib.request.Request(activate_url, data=activate_body, method="POST")
+                                activate_req.add_header("Authorization", api_key)
+                                activate_req.add_header("Accept", "application/json")
+                                activate_req.add_header("Content-Type", "application/json")
+                                with urllib.request.urlopen(activate_req, timeout=15) as activate_resp:
+                                    activate_data = json.loads(activate_resp.read().decode())
+                                    activate_status = activate_data.get("status", "?")
+                                    self._log(f"  🔌 Factor activation: {activate_status}")
+                                    if activate_status == "ACTIVE":
+                                        data_str = json.dumps(activate_data, indent=2)
+                                        if len(data_str) > 3000:
+                                            data_str = data_str[:3000] + "\n... (truncated)"
+                                        return f"API {method} {path} → 200 (via SSWS token)\nFactor enrolled AND activated successfully!\nShared secret: {shared_secret}\nStatus: ACTIVE\n{data_str}"
+                            except Exception as e:
+                                self._log(f"  🔌 Auto-activation failed: {e}")
 
                     data_str = json.dumps(data, indent=2) if isinstance(data, (dict, list)) else str(data)
                     if len(data_str) > 3000:
