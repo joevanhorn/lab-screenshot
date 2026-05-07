@@ -481,15 +481,17 @@ If you are working in the Okta Admin Console, these patterns will help:
 - The Edit Rule dialog is a SCROLLABLE modal with IF conditions at the top and THEN settings at the bottom
 - Use `scroll(down, 600)` to skip past the IF section and reach the THEN section
 - The THEN section contains: Access (Denied/Allowed), authentication requirements, MFA settings
-- The "User must authenticate with" dropdown may be a **custom Selectize control** OR a **native `<select>`** element. Use `inspect_element` to check.
-  - **If Selectize** (div.selectize-input): Click the field, then click the option text (e.g., `text=Password + Another factor`)
-  - **If native `<select>`**: Use the `select_option` tool: `select_option(selector="select[name='verificationMethod.type']", value="Password + Another factor")`
-  - Use `inspect_element` on the dropdown to determine which type it is
-  - If you accidentally open the IF section's dropdown, click the selected value to close it, then scroll down to THEN
+- **CRITICAL — Changing the "User must authenticate with" dropdown:**
+  There are MULTIPLE selectize dropdowns in this dialog (IF section has one too). To change the THEN section dropdown:
+  1. First try `select_option` tool: `select_option(selector="select[name='verificationMethod.type']", value="Password + Another factor")` — this works if the underlying `<select>` accepts the change.
+  2. If that fails, click the selectize using its parent wrapper: `click` with selector `.selectize-wrapper:has(select[name='verificationMethod.type']) .selectize-input`
+  3. Then click the option: `.selectize-dropdown.open .option:has-text("Password + Another factor")`
+  **DO NOT use `div.selectize-input` without qualifying it** — that will click the IF section dropdown instead.
+  If you accidentally open the wrong dropdown, click `text=Any user type` to close it, then try again with the qualified selector.
 - **CRITICAL: After changing the dropdown, do these 3 things and NOTHING ELSE:**
   1. `scroll(down, 2000)` — jump straight to the bottom
-  2. Click Save (look for `[data-se="save"]`, `button:has-text("Save")`, or `a:has-text("Save")`)
-  3. If a "Save anyway" confirmation appears, click it immediately
+  2. Click Save: `[data-se="save"]` or `input[value="Save"]`
+  3. If a "Save anyway" confirmation appears (in a `#simplemodal-container`), click `#simplemodal-container button:has-text("Save anyway")`
   DO NOT scroll through intermediate fields to verify them. Just save.
 - The admin may be prompted for MFA after saving — wait for the human to approve it
 
