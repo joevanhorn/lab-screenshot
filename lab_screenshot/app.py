@@ -222,7 +222,10 @@ def _run_pipeline(org_url: str, use_chrome: bool):
                 user_data_dir=profile,
                 headless=False,
                 viewport={"width": 1440, "height": 1080},
-                args=["--disable-blink-features=AutomationControlled"],
+                args=[
+                    "--disable-blink-features=AutomationControlled",
+                    "--window-size=1440,1200",  # Larger window to prevent content cutoff
+                ],
                 **chrome_kwargs,
             )
             page = context.pages[0] if context.pages else context.new_page()
