@@ -459,45 +459,30 @@ If you are working in the Okta Admin Console, these patterns will help:
 **Sidebar Navigation (left menu):**
 - The sidebar has collapsible sections: Dashboard, Directory, Customizations, Applications, Identity Governance, Security, Workflow, Reports, Settings
 - Sections with a `>` chevron EXPAND on click to reveal sub-items. Clicking "Security" doesn't navigate — it expands to show sub-items.
-- **IMPORTANT: If a sidebar click doesn't work after 2 attempts, use direct URL navigation instead.** Common admin URLs:
+- **IMPORTANT: If a sidebar click doesn't work after 2 attempts, use direct URL navigation instead.** Verified admin URLs:
   **Dashboard & Overview:**
   - Dashboard: `/admin/dashboard`
   - System Log: `/report/system_log_2`
   **Directory:**
   - People (Users): `/admin/users`
   - Groups: `/admin/groups`
-  - Profile Editor: `/admin/universalprofile`
   **Applications:**
   - Applications (active): `/admin/apps/active`
-  - Application Sign-On Policies: `/admin/authentication-policies/app-sign-in`
   **Security:**
   - Authentication Policies: `/admin/authentication-policies`
   - App Sign-In Policies: `/admin/authentication-policies/app-sign-in`
-  - Authenticators: `/admin/access/authenticators`
   - Global Session Policy: `/admin/access/policies`
   - Network Zones: `/admin/access/networks`
   - Identity Providers: `/admin/access/identity-providers`
-  - Delegated Authentication: `/admin/access/delegated-authentication`
   - Behavior Detection: `/admin/access/behaviors`
-  - Device Assurance Policies: `/admin/access/device-assurance-policies`
-  **Identity Governance:**
-  - Access Requests: `/admin/governance/access-requests`
-  - Access Certifications: `/admin/governance/access-certifications`
-  - Entitlements: `/admin/governance/entitlements`
   **Customizations:**
   - Brands: `/admin/customizations/brands`
-  - Email Templates: `/admin/email`
-  - Sign-In Page: `/admin/customizations/signin`
   **Workflow:**
-  - Workflows: `/admin/workflow`
   - Event Hooks: `/admin/workflow/eventhooks`
-  **Reports:**
-  - Reports: `/admin/reports`
-  - System Log: `/report/system_log_2`
   **Settings:**
   - General: `/admin/settings/account`
   - Features: `/admin/settings/features`
-  - API: `/admin/access/api/tokens`
+  - API Tokens: `/admin/access/api/tokens`
   - Downloads: `/admin/settings/downloads`
   Construct the full URL from the admin domain visible in the address bar (e.g., `https://your-org-admin.okta.com/admin/dashboard`).
 - Tip: `get_page_state` will show sidebar items with their `data-se` attributes
@@ -619,6 +604,24 @@ Use the browser_api tool with SSWS token (must be provided in app UI):
             if iteration > 0:
                 try:
                     page_b64 = self._capture_page_b64()
+                except Exception as page_err:
+                    # Page may have closed (e.g., MFA tab closed after approval)
+                    self._log(f"  ⚠ Screenshot failed ({page_err}), recovering...")
+                    valid_pages = [p for p in self.context.pages if not p.is_closed()]
+                    if valid_pages:
+                        for p in valid_pages:
+                            if "-admin." in p.url or "/admin/" in p.url:
+                                self.page = p
+                                break
+                        else:
+                            self.page = valid_pages[0]
+                        self._log(f"  ⚠ Recovered to: {self.page.url[:60]}")
+                        self.page.wait_for_timeout(2000)
+                        page_b64 = self._capture_page_b64()
+                    else:
+                        self._log(f"  ⚠ All pages closed, cannot continue")
+                        break
+                try:
                     # Detect open dialogs and include their text
                     dialog_text = self.page.evaluate(
                         f'() => {{ const d = document.querySelector(\'{self.DIALOG_CSS}\'); return d ? d.innerText.substring(0, 500) : null; }}'
