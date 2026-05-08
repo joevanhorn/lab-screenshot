@@ -562,6 +562,23 @@ Use the browser_api tool with SSWS token (must be provided in app UI):
         for iteration in range(max_iterations):
             self._log(f"  [{title[:30]}] iteration {iteration + 1}/{max_iterations}")
 
+            # Safety: ensure current page is still valid
+            try:
+                self.page.url
+            except Exception:
+                valid_pages = [p for p in self.context.pages if not p.is_closed()]
+                if valid_pages:
+                    for p in valid_pages:
+                        if "-admin." in p.url or "/admin/" in p.url:
+                            self.page = p
+                            break
+                    else:
+                        self.page = valid_pages[0]
+                    self._log(f"  ⚠ Page was closed, recovered to: {self.page.url[:60]}")
+                else:
+                    self._log(f"  ⚠ All pages closed, cannot continue")
+                    break
+
             # Build messages with ephemeral screenshot + progress summary
             call_messages = list(messages)
             if iteration > 0:
@@ -668,6 +685,23 @@ Use the browser_api tool with SSWS token (must be provided in app UI):
                 fname = tc.function.name
                 if fname == "section_complete":
                     section_done = True
+
+                # Safety: if current page was closed (e.g., MFA tab closed after approval),
+                # switch to a valid page
+                try:
+                    self.page.url  # Test if page is still valid
+                except Exception:
+                    valid_pages = [p for p in self.context.pages if not p.is_closed()]
+                    if valid_pages:
+                        # Prefer admin tab, then lab tab
+                        for p in valid_pages:
+                            if "-admin." in p.url or "/admin/" in p.url:
+                                self.page = p
+                                break
+                        else:
+                            self.page = valid_pages[0]
+                        self._log(f"  ⚠ Page was closed, switched to: {self.page.url[:60]}")
+                        result += f"\n(Note: Previous tab was closed. Now on: {self.page.url[:80]})"
 
                 # Record progress for actions that change page state
                 if fname in ("click", "fill", "navigate", "switch_tab", "scroll", "browser_api", "select_option"):
