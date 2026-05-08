@@ -372,11 +372,21 @@ def _run_pipeline(org_url: str, use_chrome: bool):
                 stdin_thread.start()
 
                 # Wait for response from either web UI or terminal
+                # Re-ping at 30s and 60s if no response
                 timeout = 300  # 5 minutes
                 waited = 0
+                pinged = 0
                 while _current_job.get("human_answer") is None and waited < timeout:
                     time.sleep(1)
                     waited += 1
+                    if waited == 30 and pinged == 0:
+                        pinged = 1
+                        log_progress(f"🔔 REMINDER: The bot is still waiting for your response. Please check the chat panel or terminal.", "human")
+                        print(f"\n🔔 REMINDER: Bot is still waiting for your response!", file=sys.stderr)
+                    elif waited == 60 and pinged == 1:
+                        pinged = 2
+                        log_progress(f"🔔 FINAL REMINDER: The bot needs your input to continue. Respond in the chat or terminal.", "human")
+                        print(f"\n🔔 FINAL REMINDER: Bot needs your input to continue!", file=sys.stderr)
                 answer = _current_job.get("human_answer") or "No response (timed out)"
                 _current_job["human_question"] = None
                 log_progress(f"👤 HUMAN: {answer}", "human")
