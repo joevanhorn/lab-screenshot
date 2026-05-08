@@ -83,13 +83,18 @@ def select_frames(
         content = [
             {
                 "type": "text",
-                "text": f"""I have a gallery of {len(sampled)} screenshots captured during an Okta Admin Console session. I need you to select the ONE frame that best matches this description:
+                "text": f"""I have a gallery of {len(sampled)} screenshots captured during a browser automation session. I need you to select the ONE frame that best matches this description:
 
 **"{marker.description}"**
 
-Below are the frames. Each is labeled with its index number, URL, and the action that preceded it. Pick the frame that shows the page/feature described above.
+Below are the frames with their index numbers, URLs, and preceding actions.
 
-Respond with ONLY a JSON object: {{"selected_frame": <index_number>, "reason": "<brief reason>"}}
+IMPORTANT RULES:
+- You MUST select a frame. Do not refuse or say none match.
+- Pick the CLOSEST match, even if it's not perfect. A partial match is better than no match.
+- If multiple frames could work, pick the one that best represents what the description asks for.
+
+Respond with a JSON object on a single line: {{"selected_frame": <index_number>, "reason": "<brief reason>"}}
 
 Frame metadata:
 """ + "\n".join(f"  Frame {f['index']}: URL={f['url'][:80]}, Title={f['title'][:40]}, Action={f['action'][:40]}" for f in sampled)
@@ -114,7 +119,7 @@ Frame metadata:
         litellm_kwargs = {
             "model": model_id,
             "messages": messages,
-            "max_tokens": 256,
+            "max_tokens": 512,
         }
         if os.environ.get("LITELLM_API_BASE"):
             litellm_kwargs["api_base"] = os.environ["LITELLM_API_BASE"]
@@ -152,14 +157,54 @@ Frame metadata:
 
             except json.JSONDecodeError as e:
                 _log(f"  JSON parse error (attempt {attempt + 1}): {e}")
+                _log(f"  Raw reply: {repr(reply[:200]) if reply else '(empty)'}")
                 if attempt == 0:
                     _log(f"  Retrying with fewer frames...")
                     # Reduce frame count on retry
                     if len(sampled) > 10:
                         sampled = sampled[::2]  # Take every other frame
+                    # Also rebuild the content with fewer frames
+                    content = [content[0]]  # Keep the text prompt
+                    for f in sampled:
+                        content.append({"type": "text", "text": f"\n--- Frame {f['index']} ---"})
+                        content.append({"type": "image_url", "image_url": {"url": f"data:image/png;base64,{f['base64']}"}})
+                    litellm_kwargs["messages"] = [{"role": "user", "content": content}]
             except Exception as e:
                 _log(f"  ERROR selecting frame: {e}")
                 break
+
+        # Fallback: if LLM failed, pick the best frame heuristically
+        if marker.index not in results and frame_images:
+            desc_lower = marker.description.lower()
+            best_frame = None
+            best_score = -1
+
+            for f in frame_images:
+                score = 0
+                action_lower = f.get("action", "").lower()
+                title_lower = f.get("title", "").lower()
+                url_lower = f.get("url", "").lower()
+
+                # Score based on keyword matches between description and frame metadata
+                for keyword in desc_lower.split():
+                    if len(keyword) > 3:  # Skip short words
+                        if keyword in action_lower:
+                            score += 2
+                        if keyword in title_lower:
+                            score += 2
+                        if keyword in url_lower:
+                            score += 1
+
+                # Prefer frames from the middle/end of the session (more likely to show results)
+                score += f["index"] / len(frame_images)
+
+                if score > best_score:
+                    best_score = score
+                    best_frame = f
+
+            if best_frame:
+                _log(f"  FALLBACK: Using frame {best_frame['index']} (score {best_score:.1f}) — {best_frame['action'][:50]}")
+                results[marker.index] = f"data:image/png;base64,{best_frame['base64']}"
 
     _log(f"Selected {len(results)}/{len(markers)} frames")
     return results
