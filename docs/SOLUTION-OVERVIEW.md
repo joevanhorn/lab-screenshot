@@ -192,7 +192,11 @@ After all sections execute, the vision model reviews the captured frame gallery:
 
 **API workarounds**: When a section requires physical device interaction (mobile MFA enrollment, QR code scanning), the comprehension phase identifies this and generates an API-based workaround that achieves the same outcome programmatically.
 
-**Human-in-the-loop**: The bot detects when it needs human intervention (MFA push approval, ambiguous instructions) and requests help via the chat panel, with desktop notifications and audio alerts.
+**Human-in-the-loop**: The bot detects when it needs human intervention (MFA push approval, ambiguous instructions) and requests help via the chat panel, with desktop notifications and audio alerts. Reminder pings are sent at 30 and 60 seconds if no response is received.
+
+**Tab awareness**: The bot tracks the number of open browser tabs throughout each section. When a new tab opens (e.g., an MFA step-up challenge, an authentication redirect, or a link click), the bot detects it immediately and investigates to determine if the new tab is relevant to the current task. This is especially important for Okta's admin MFA flow, which can open a step-up authentication challenge in a new tab.
+
+**Stuck detection**: When the bot is past 60% of its iteration budget for a section, it receives suggestions to: check for new tabs, use `inspect_element` to debug click failures, or call `ask_human` for guidance. This prevents the bot from burning all iterations on a single stuck interaction.
 
 ### Technology Stack
 

@@ -432,7 +432,8 @@ Before EVERY action, think step by step (write your reasoning in your response):
 After each action, look at the screenshot you receive and assess:
 - **Did it work?** Compare what you see to what you expected.
 - **Am I done?** Have I completed all the steps? If yes → call section_complete with a brief reason.
-- **Am I stuck?** If the same thing keeps happening, try a completely different approach. If you've tried 2-3 things and nothing works, call ask_human.
+- **Did a new tab open?** Some actions (saving policies, clicking links) open new tabs for MFA challenges or authentication prompts. If a new tab opened, use list_tabs to find it and switch_tab to investigate.
+- **Am I stuck?** If the same thing keeps happening: (1) use list_tabs to check if a new tab opened that needs attention, (2) use inspect_element to debug a click that isn't working, (3) try a completely different approach, (4) call ask_human if nothing works.
 
 ## KEY PRINCIPLES
 
@@ -536,6 +537,7 @@ Use the browser_api tool with SSWS token (must be provided in app UI):
 
         # Cumulative progress log — tracks what the bot has done and observed
         progress_log = []
+        initial_tab_count = len(self.context.pages)
 
         for iteration in range(max_iterations):
             self._log(f"  [{title[:30]}] iteration {iteration + 1}/{max_iterations}")
@@ -550,8 +552,16 @@ Use the browser_api tool with SSWS token (must be provided in app UI):
                         f'() => {{ const d = document.querySelector(\'{self.DIALOG_CSS}\'); return d ? d.innerText.substring(0, 500) : null; }}'
                     )
 
+                    # Detect new tabs that opened since section started
+                    current_tab_count = len(self.context.pages)
+                    new_tabs_opened = current_tab_count > initial_tab_count
+
                     # Build progress-aware hint
                     parts = ["Here is the current page."]
+
+                    # Alert about new tabs
+                    if new_tabs_opened:
+                        parts.append(f'⚠ NEW TAB DETECTED: There are now {current_tab_count} tabs (was {initial_tab_count} when this section started). A new tab may have opened for an MFA challenge, authentication prompt, or related action. Use list_tabs to check what opened, and switch_tab if it is relevant to your current task.')
                     if dialog_text:
                         parts.append(f'⚠ A DIALOG is open. Text: "{dialog_text[:300]}"')
                         # Detect admin MFA step-up authentication
@@ -569,6 +579,11 @@ Use the browser_api tool with SSWS token (must be provided in app UI):
                         for entry in progress_log[-10:]:
                             parts.append(f"- {entry}")
                         parts.append(f"\nYou have taken {len(progress_log)} actions so far. Do NOT repeat actions you have already completed successfully.")
+
+                    # Stuck detection: if we're past 60% of iterations, suggest checking tabs or asking for help
+                    if iteration > max_iterations * 0.6:
+                        parts.append(f"\n⚠ You are on iteration {iteration + 1}/{max_iterations}. If you are stuck, try: (1) list_tabs to check if something opened in another tab, (2) inspect_element to debug a click that isn't working, (3) ask_human for guidance.")
+
                     parts.append("\nLook at this screenshot and your progress above. If you have completed all the steps in this section, call section_complete NOW. Do not re-do steps that already succeeded.")
 
                     call_messages.append({
