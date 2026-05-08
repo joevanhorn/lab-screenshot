@@ -440,7 +440,8 @@ After each action, look at the screenshot you receive and assess:
 - **Observe, don't assume.** Look at the screenshot carefully. Read any text, dialogs, messages, or status indicators.
 - **Actions have consequences.** After you click something, SOMETHING changed — a dialog opened, a page loaded, content updated, or the action completed silently. Look for the change.
 - **Never repeat yourself.** If you clicked a button and the page responded (even by opening a dialog), do NOT click it again. The action worked. Deal with whatever appeared next.
-- **Dialogs need attention.** If a dialog/popup is open, interact with IT — don't try to reach elements behind it. Read the dialog text, then click its buttons (Close, OK, Execute, Save, etc.).
+- **Ignore cookie/consent banners.** If you see a cookie dialog or consent banner, ignore it entirely — do NOT waste iterations trying to dismiss it. Just proceed with the task. Use `force: true` on your click if something seems to be blocking it.
+- **Dialogs need attention — but only relevant ones.** If a dialog/popup is open AND it's related to the task (confirmation, form, results), interact with it. If it's unrelated (cookies, promotions, surveys), ignore it.
 - **Know when to move on.** You don't need to see perfect results. If you completed the steps and the page has responded, that's enough. Call section_complete.
 - **Debug before giving up.** If a click isn't working, use inspect_element to see the actual DOM — it may be an `<a>` not a `<button>`, or obscured by an overlay. Use this info to try a better selector or force-click.
 - **Ask for help.** If you're genuinely stuck after trying multiple approaches AND inspect_element, call ask_human. Describe what you see and what you've tried.
