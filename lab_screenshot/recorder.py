@@ -484,12 +484,13 @@ If you are working in the Okta Admin Console, these patterns will help:
 - Use `scroll(down, 600)` to skip past the IF section and reach the THEN section
 - The THEN section contains: Access (Denied/Allowed), authentication requirements, MFA settings
 - **CRITICAL — Changing the "User must authenticate with" dropdown:**
-  There are MULTIPLE selectize dropdowns in this dialog (IF section has one too). To change the THEN section dropdown:
-  1. First try `select_option` tool: `select_option(selector="select[name='verificationMethod.type']", value="Password + Another factor")` — this works if the underlying `<select>` accepts the change.
-  2. If that fails, click the selectize using its parent wrapper: `click` with selector `.selectize-wrapper:has(select[name='verificationMethod.type']) .selectize-input`
-  3. Then click the option: `.selectize-dropdown.open .option:has-text("Password + Another factor")`
+  This dropdown uses a custom library (Selectize, Chosen, or similar) that HIDES the native `<select>`. Clicking the native `<select>` element directly will NOT open the dropdown visually. Follow this approach:
+  1. First try clicking the container div that wraps the dropdown: `click` with `div[data-se="o-form-fieldset"]:has-text("User must authenticate") div.o-form-input`
+  2. If a dropdown opens showing options, click `text=Password + Another factor`
+  3. If that doesn't work, try the Chosen container: `click` with `div.chzn-container` or `div.chzn-single`
+  4. As a last resort, use `select_option(selector="select[name='verificationMethod.type']", value="Password + Another factor")`
   **DO NOT use `div.selectize-input` without qualifying it** — that will click the IF section dropdown instead.
-  If you accidentally open the wrong dropdown, click `text=Any user type` to close it, then try again with the qualified selector.
+  If you accidentally open the wrong dropdown (IF section), click `text=Any user type` to close it, scroll down to THEN, and try again.
 - **CRITICAL: After changing the dropdown, follow this EXACT sequence:**
   1. `scroll(down, 2000)` — jump straight to the bottom
   2. Click Save: try `input[value="Save"]` or `[data-se="save"]`
@@ -897,7 +898,7 @@ Use the browser_api tool with SSWS token (must be provided in app UI):
                     self.page.locator(selector).first.evaluate("el => el.dispatchEvent(new Event('change', {bubbles: true}))")
                     result = f"Selected value '{value}' from '{selector}'"
                 except Exception:
-                    # Fallback: use JavaScript to set value and trigger Selectize
+                    # Fallback: use JavaScript to set value and trigger Selectize/Chosen
                     try:
                         self.page.evaluate(f"""(args) => {{
                             const sel = document.querySelector(args.selector);
@@ -909,10 +910,16 @@ Use the browser_api tool with SSWS token (must be provided in app UI):
                                 sel.value = match.value;
                                 sel.dispatchEvent(new Event('change', {{bubbles: true}}));
                             }}
-                            // Also update Selectize if present
+                            // Update Selectize if present
                             if (sel.selectize) {{
                                 sel.selectize.setValue(match ? match.value : args.value);
                             }}
+                            // Update Chosen if present
+                            if (window.jQuery && jQuery(sel).data('chosen')) {{
+                                jQuery(sel).val(match ? match.value : args.value).trigger('chosen:updated').trigger('change');
+                            }}
+                            // Force trigger liszt:updated for older Chosen versions
+                            try {{ jQuery(sel).trigger('liszt:updated'); }} catch(e) {{}}
                         }}""", {"selector": selector, "value": value})
                         result = f"Selected '{value}' via JS fallback from '{selector}'"
                     except Exception as e:
