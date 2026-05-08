@@ -32,6 +32,13 @@ import uvicorn
 
 app = FastAPI(title="Lab Screenshot")
 
+
+@app.on_event("startup")
+async def _capture_loop():
+    global _main_loop
+    _main_loop = asyncio.get_event_loop()
+
+
 # Global state for the current job
 _current_job = {
     "status": "idle",  # idle, setup, recording, selecting, done, error
@@ -53,16 +60,17 @@ async def broadcast(msg: dict):
             _websocket_clients.remove(ws)
 
 
+_main_loop = None  # Set when uvicorn starts
+
 def log_progress(message: str, level: str = "info"):
     """Log a progress message and broadcast to UI."""
     entry = {"time": time.strftime("%H:%M:%S"), "level": level, "message": message}
     _current_job["progress"].append(entry)
-    # Broadcast async from sync context
+    # Broadcast to WebSocket clients — works from any thread
     try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            asyncio.ensure_future(broadcast({"type": "progress", **entry}))
-    except RuntimeError:
+        if _main_loop and _main_loop.is_running():
+            asyncio.run_coroutine_threadsafe(broadcast({"type": "progress", **entry}), _main_loop)
+    except Exception:
         pass
 
 

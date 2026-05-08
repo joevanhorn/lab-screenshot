@@ -556,8 +556,11 @@ Use the browser_api tool with SSWS token (must be provided in app UI):
                         parts.append(f'⚠ A DIALOG is open. Text: "{dialog_text[:300]}"')
                         # Detect admin MFA step-up authentication
                         dt_lower = dialog_text.lower()
-                        if any(kw in dt_lower for kw in ['protected action', 'step-up', 'step up', 'push notification', 'send push', 'okta verify', 'select']):
-                            parts.append('⚠ ADMIN MFA STEP-UP: First click "Send push" or "Verify" or "Select" button to trigger the push notification. THEN call ask_human to tell the admin to approve it on their phone.')
+                        if any(kw in dt_lower for kw in ['protected action', 'step-up', 'step up', 'push notification', 'send push', 'okta verify']):
+                            parts.append('⚠ ADMIN MFA STEP-UP DETECTED! First look for a "Send push" or "Verify" button and click it to trigger the notification. Then IMMEDIATELY call ask_human to tell the admin to approve the push on their phone. Do NOT wait or keep checking — call ask_human NOW.')
+                        elif '●' in dialog_text or '•' in dialog_text:
+                            # Loading spinner after save — likely MFA waiting
+                            parts.append('⚠ The dialog is showing a loading spinner. This is likely waiting for admin MFA approval. Call ask_human IMMEDIATELY to request the admin approve the push notification.')
                     if progress_log:
                         parts.append("## YOUR PROGRESS SO FAR (do NOT repeat completed actions)")
                         for entry in progress_log[-10:]:
