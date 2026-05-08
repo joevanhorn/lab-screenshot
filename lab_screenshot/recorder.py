@@ -535,6 +535,25 @@ Use the browser_api tool with SSWS token (must be provided in app UI):
 
         messages = [{"role": "user", "content": f"Execute this section: **{title}**\n\nGoal: {goal}\n\nSteps:\n{steps}\n\nDone when: {success}"}]
 
+        # Dismiss any cookie/consent dialogs before starting
+        try:
+            for cookie_sel in [
+                '#onetrust-accept-btn-handler',
+                'button:has-text("Accept All")',
+                'button:has-text("Accept Cookies")',
+                'button:has-text("Allow All")',
+                '[data-testid="cookie-accept"]',
+                '.onetrust-close-btn-handler',
+            ]:
+                btn = self.page.locator(cookie_sel).first
+                if btn.count() > 0 and btn.is_visible(timeout=500):
+                    btn.click(timeout=2000)
+                    self.page.wait_for_timeout(500)
+                    self._log(f"  Dismissed cookie dialog: {cookie_sel}")
+                    break
+        except Exception:
+            pass
+
         # Cumulative progress log — tracks what the bot has done and observed
         progress_log = []
         initial_tab_count = len(self.context.pages)
