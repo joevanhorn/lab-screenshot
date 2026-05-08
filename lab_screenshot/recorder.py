@@ -339,7 +339,7 @@ For each section, identify:
 ## Rules:
 - Group related steps by guide heading/section
 - Each section needs a CLEAR, OBSERVABLE completion condition
-- **Read the guide to determine context.** If the guide says "From the Admin Console, go to Reports > System Log", that section happens in the Admin Console tab. If it says "From Tech{{Camp}} - Brute Force Attack Simulator, Execute the attack", that happens on the lab guide page.
+- **Read the guide to determine context.** Look for phrases that indicate WHERE the action happens. Examples: "From the Admin Console, go to..." means the Admin Console tab. "From the lab guide, click..." means the lab guide page. If a tool or simulator panel is referenced on the lab page (e.g., an attack simulator, a configuration tool), that section happens on the lab guide page, not a separate tab.
 - **Prefer API workarounds over skipping.** If a section requires a mobile device (e.g., enroll Okta Verify, scan QR code) or a virtual desktop, think about whether the same outcome can be achieved via an Okta API call. For example, factor enrollment can be done via `/api/v1/users/{{userId}}/factors`. Only set skip_reason if there is truly no workaround.
 - **Never use api_workaround for admin MFA.** If the guide says "Save and provide MFA if required", that must happen through the UI — the human admin will complete the MFA push.
 - If a section triggers an async operation (simulation, API call): click the button, confirm any dialog, wait for results, observe
@@ -494,7 +494,7 @@ If you are working in the Okta Admin Console, these patterns will help:
 - **CRITICAL: After changing the dropdown, follow this EXACT sequence:**
   1. `scroll(down, 2000)` — jump straight to the bottom
   2. Click Save: try `input[value="Save"]` or `[data-se="save"]`
-  3. A "Save anyway" confirmation will appear. Click it with: `input[value="Save anyway"]` (it's an input, not a button!)
+  3. Okta may show a "Save anyway" confirmation if the policy change reduces security assurance (e.g., weaker MFA requirements). Click it with: `input[value="Save anyway"]` (it's an input, not a button!)
   4. After clicking Save anyway, Okta may require **admin MFA step-up authentication**. If you see text about "protected action" or "step-up authentication" or an authenticator selection screen:
      - FIRST: Look for a "Send push" or "Verify" or "Select" button in the MFA prompt and CLICK IT to trigger the push notification to the admin's phone
      - THEN: Call `ask_human` with: "I clicked Send Push to trigger the MFA notification. Please approve it on your device and let me know when done."
