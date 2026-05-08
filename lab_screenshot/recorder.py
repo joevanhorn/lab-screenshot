@@ -484,13 +484,11 @@ If you are working in the Okta Admin Console, these patterns will help:
 - Use `scroll(down, 600)` to skip past the IF section and reach the THEN section
 - The THEN section contains: Access (Denied/Allowed), authentication requirements, MFA settings
 - **CRITICAL — Changing the "User must authenticate with" dropdown:**
-  This dropdown uses a custom library (Selectize, Chosen, or similar) that HIDES the native `<select>`. Clicking the native `<select>` element directly will NOT open the dropdown visually. Follow this approach:
-  1. First try clicking the container div that wraps the dropdown: `click` with `div[data-se="o-form-fieldset"]:has-text("User must authenticate") div.o-form-input`
-  2. If a dropdown opens showing options, click `text=Password + Another factor`
-  3. If that doesn't work, try the Chosen container: `click` with `div.chzn-container` or `div.chzn-single`
-  4. As a last resort, use `select_option(selector="select[name='verificationMethod.type']", value="Password + Another factor")`
-  **DO NOT use `div.selectize-input` without qualifying it** — that will click the IF section dropdown instead.
-  If you accidentally open the wrong dropdown (IF section), click `text=Any user type` to close it, scroll down to THEN, and try again.
+  This dropdown uses a custom library that hides the native `<select>`. Do NOT click `select` elements directly. Use this EXACT two-step approach:
+  **Step 1 — Open the dropdown:** `click` with selector `div[data-se="o-form-fieldset"]:has-text("User must authenticate") div.o-form-input`
+  **Step 2 — Select the option:** `click` with selector `text=Password + Another factor`
+  That's it. Do NOT try other selectors first. This approach works regardless of the dropdown library (Selectize, Chosen, or native).
+  If you accidentally open the IF section's dropdown instead, click `text=Any user type` to close it, scroll down to THEN, and try again with the exact selector above.
 - **CRITICAL: After changing the dropdown, follow this EXACT sequence:**
   1. `scroll(down, 2000)` — jump straight to the bottom
   2. Click Save: try `input[value="Save"]` or `[data-se="save"]`
