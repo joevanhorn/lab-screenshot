@@ -561,7 +561,9 @@ Use the browser_api tool with SSWS token (must be provided in app UI):
                             parts.append('⚠ ADMIN MFA STEP-UP DETECTED! First look for a "Send push" or "Verify" button and click it to trigger the notification. Then IMMEDIATELY call ask_human to tell the admin to approve the push on their phone. Do NOT wait or keep checking — call ask_human NOW.')
                         elif save_anyway_clicked:
                             # We already clicked Save anyway but the dialog is still open — must be MFA
-                            parts.append('⚠ You already clicked "Save anyway" but the dialog is still open. This means Okta is waiting for ADMIN MFA step-up authentication. Look for a "Send push" button and click it, then IMMEDIATELY call ask_human to request the admin approve the push. Do NOT wait — act NOW.')
+                            # Check if a new tab opened for MFA step-up
+                            tab_count = len(self.context.pages)
+                            parts.append(f'⚠ You already clicked "Save anyway" but the dialog is still open. This means Okta is waiting for ADMIN MFA step-up authentication. There are {tab_count} tabs open — CHECK if a new tab opened for the MFA challenge (use list_tabs). If so, switch to it and click "Send push" or "Verify". Then call ask_human to request the admin approve the push. Do NOT wait — act NOW.')
                     if progress_log:
                         parts.append("## YOUR PROGRESS SO FAR (do NOT repeat completed actions)")
                         for entry in progress_log[-10:]:
