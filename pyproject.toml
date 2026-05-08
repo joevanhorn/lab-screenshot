@@ -12,7 +12,7 @@ dependencies = [
     "pyotp>=2.9.0",
     "litellm>=1.40.0",
     "fastapi>=0.115.0",
-    "uvicorn>=0.30.0",
+    "uvicorn[standard]>=0.30.0",
     "python-multipart>=0.0.9",
 ]
 
