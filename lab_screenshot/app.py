@@ -806,6 +806,7 @@ async function handOffToBot() {
     if (resp.ok) {
         document.getElementById('card-handoff').style.display = 'none';
         document.getElementById('card-progress').style.display = 'block';
+        document.getElementById('card-chat').style.display = 'block';
         document.getElementById('status-text').textContent = 'Bot is recording...';
         setStep('record');
     }
