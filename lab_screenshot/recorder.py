@@ -460,12 +460,46 @@ If you are working in the Okta Admin Console, these patterns will help:
 - The sidebar has collapsible sections: Dashboard, Directory, Customizations, Applications, Identity Governance, Security, Workflow, Reports, Settings
 - Sections with a `>` chevron EXPAND on click to reveal sub-items. Clicking "Security" doesn't navigate — it expands to show sub-items.
 - **IMPORTANT: If a sidebar click doesn't work after 2 attempts, use direct URL navigation instead.** Common admin URLs:
-  - Authentication Policies: `/admin/authentication-policies/app-sign-in`
-  - System Log: `/report/system_log_2`
+  **Dashboard & Overview:**
   - Dashboard: `/admin/dashboard`
-  - Users/People: `/admin/users`
-  - Applications: `/admin/apps/active`
-  Construct the full URL from the admin domain visible in the address bar.
+  - System Log: `/report/system_log_2`
+  **Directory:**
+  - People (Users): `/admin/users`
+  - Groups: `/admin/groups`
+  - Profile Editor: `/admin/universalprofile`
+  **Applications:**
+  - Applications (active): `/admin/apps/active`
+  - Application Sign-On Policies: `/admin/authentication-policies/app-sign-in`
+  **Security:**
+  - Authentication Policies: `/admin/authentication-policies`
+  - App Sign-In Policies: `/admin/authentication-policies/app-sign-in`
+  - Authenticators: `/admin/access/authenticators`
+  - Global Session Policy: `/admin/access/policies`
+  - Network Zones: `/admin/access/networks`
+  - Identity Providers: `/admin/access/identity-providers`
+  - Delegated Authentication: `/admin/access/delegated-authentication`
+  - Behavior Detection: `/admin/access/behaviors`
+  - Device Assurance Policies: `/admin/access/device-assurance-policies`
+  **Identity Governance:**
+  - Access Requests: `/admin/governance/access-requests`
+  - Access Certifications: `/admin/governance/access-certifications`
+  - Entitlements: `/admin/governance/entitlements`
+  **Customizations:**
+  - Brands: `/admin/customizations/brands`
+  - Email Templates: `/admin/email`
+  - Sign-In Page: `/admin/customizations/signin`
+  **Workflow:**
+  - Workflows: `/admin/workflow`
+  - Event Hooks: `/admin/workflow/eventhooks`
+  **Reports:**
+  - Reports: `/admin/reports`
+  - System Log: `/report/system_log_2`
+  **Settings:**
+  - General: `/admin/settings/account`
+  - Features: `/admin/settings/features`
+  - API: `/admin/access/api/tokens`
+  - Downloads: `/admin/settings/downloads`
+  Construct the full URL from the admin domain visible in the address bar (e.g., `https://your-org-admin.okta.com/admin/dashboard`).
 - Tip: `get_page_state` will show sidebar items with their `data-se` attributes
 
 **Authentication Policies:**
