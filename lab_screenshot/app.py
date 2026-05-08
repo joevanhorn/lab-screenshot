@@ -164,6 +164,13 @@ async def stop_recording():
     return JSONResponse({"status": "stopped"})
 
 
+@app.post("/api/human-response")
+async def human_response(answer: str = Form("")):
+    """Respond to a bot question (ask_human tool)."""
+    _current_job["human_answer"] = answer or "Continue"
+    return JSONResponse({"status": "ok"})
+
+
 @app.get("/api/download")
 async def download_output():
     """Download the output markdown file."""
@@ -256,6 +263,22 @@ def _run_pipeline(org_url: str, use_chrome: bool):
                         break
             log_progress(f"Active tab: {page.url} ({len(active_pages)} tabs open)")
 
+            def _human_input_callback(question: str) -> str:
+                """Ask the human operator via the web UI and wait for response."""
+                _current_job["human_question"] = question
+                _current_job["human_answer"] = None
+                log_progress(f"🙋 BOT ASKS: {question}", "human")
+                # Wait for human response (polled via /api/human-response)
+                timeout = 120  # 2 minutes max
+                waited = 0
+                while _current_job.get("human_answer") is None and waited < timeout:
+                    time.sleep(1)
+                    waited += 1
+                answer = _current_job.get("human_answer") or "No response (timed out)"
+                _current_job["human_question"] = None
+                log_progress(f"👤 HUMAN: {answer}", "human")
+                return answer
+
             recorder = GuideRecorder(
                 page=page,
                 context=context,
@@ -263,6 +286,7 @@ def _run_pipeline(org_url: str, use_chrome: bool):
                 output_dir=str(recording_dir),
                 verbose=True,
                 okta_api_key=_current_job.get("okta_api_key", ""),
+                human_input_callback=_human_input_callback,
             )
 
             # Redirect recorder logs to our progress
@@ -479,6 +503,20 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; b
         <div class="log" id="log"></div>
     </div>
 
+    <!-- Human Input Prompt -->
+    <div class="card" id="card-human-input" style="display:none; border: 2px solid #f59e0b; background: #fffbeb;">
+        <h2 style="color:#b45309;">🙋 Bot Needs Your Help</h2>
+        <p id="human-question" style="color:#475569;font-size:15px;margin-bottom:12px;"></p>
+        <div class="form-row">
+            <div class="form-group">
+                <input type="text" id="human-answer" placeholder="Type your response (or just click Continue)..." onkeydown="if(event.key==='Enter')sendHumanResponse()">
+            </div>
+        </div>
+        <div class="btn-row">
+            <button class="btn btn-primary" onclick="sendHumanResponse()" style="background:#f59e0b;">Continue</button>
+        </div>
+    </div>
+
     <!-- Result -->
     <div class="card" id="card-result" style="display:none">
         <h2>Results</h2>
@@ -503,7 +541,25 @@ function connectWS() {
     ws = new WebSocket('ws://' + location.host + '/ws');
     ws.onmessage = function(e) {
         const msg = JSON.parse(e.data);
-        if (msg.type === 'progress') addLogEntry(msg);
+        if (msg.type === 'progress') {
+            addLogEntry(msg);
+            // Check if this is a human input request
+            if (msg.level === 'human' && msg.message.startsWith('🙋')) {
+                document.getElementById('human-question').textContent = msg.message.replace('🙋 BOT ASKS: ', '');
+                document.getElementById('card-human-input').style.display = 'block';
+                document.getElementById('human-answer').focus();
+                // Send browser notification
+                if (Notification.permission === 'granted') {
+                    new Notification('Lab Screenshot Bot', { body: 'The bot needs your input!', icon: '🙋' });
+                } else if (Notification.permission !== 'denied') {
+                    Notification.requestPermission();
+                }
+            }
+            // Hide prompt when human response is logged
+            if (msg.level === 'human' && msg.message.startsWith('👤')) {
+                document.getElementById('card-human-input').style.display = 'none';
+            }
+        }
     };
     ws.onclose = function() { setTimeout(connectWS, 2000); };
 }
@@ -520,6 +576,20 @@ function addLogEntry(entry) {
 
 function escapeHtml(s) {
     return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+async function sendHumanResponse() {
+    const answer = document.getElementById('human-answer').value || 'Continue';
+    const form = new FormData();
+    form.append('answer', answer);
+    await fetch('/api/human-response', { method: 'POST', body: form });
+    document.getElementById('card-human-input').style.display = 'none';
+    document.getElementById('human-answer').value = '';
+}
+
+// Request notification permission on load
+if ('Notification' in window && Notification.permission === 'default') {
+    Notification.requestPermission();
 }
 
 async function handleUpload(input) {
