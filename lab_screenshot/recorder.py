@@ -174,10 +174,18 @@ class GuideRecorder:
 
         return '\n'.join(output)
 
-    def record_guide(self, guide_text: str, max_iterations: int = 100) -> Recording:
+    def record_guide(self, guide_text: str, max_iterations: int | None = None, max_per_section: int = 25) -> Recording:
         """
         Execute guide steps via LLM and capture frames throughout.
         Returns the complete Recording with all frames.
+
+        max_per_section caps each section's iteration budget. The dynamic floor
+        (15 iters or 4×steps, whichever is larger) still applies — this is the
+        ceiling. Default 25 matches prior hardcoded behavior. Surfaced in the
+        web UI for users who want to give complex sections more headroom.
+
+        max_iterations is the overall budget across all sections. When None
+        (the typical case), it's auto-computed as num_sections × max_per_section.
         """
         from .guide import parse_markers
 
@@ -203,7 +211,7 @@ class GuideRecorder:
 
         # Use LLM to drive navigation
         try:
-            self._drive_with_llm(clean_text, action_steps, markers, max_iterations)
+            self._drive_with_llm(clean_text, action_steps, markers, max_iterations, max_per_section)
         except Exception as e:
             self._log(f"LLM navigation error: {e}")
 
@@ -258,7 +266,7 @@ class GuideRecorder:
         {"name": "inspect_element", "description": "Inspect a DOM element like browser DevTools. Use this when a click isn't working as expected — it reveals the element's actual tag, classes, attributes, whether it's obscured by another element, and suggests better selectors. Helps debug why clicks fail.", "input_schema": {"type": "object", "properties": {"selector": {"type": "string", "description": "Playwright selector for the element to inspect"}}, "required": ["selector"]}},
     ]
 
-    def _drive_with_llm(self, guide_text: str, action_steps: str, markers, max_iterations: int):
+    def _drive_with_llm(self, guide_text: str, action_steps: str, markers, max_iterations: int | None, max_per_section: int = 25):
         """Comprehend guide, then execute section by section."""
         try:
             from litellm import completion
@@ -276,13 +284,17 @@ class GuideRecorder:
         # Phase 1: Comprehend the guide
         sections = self._comprehend_guide(guide_text, action_steps, markers)
 
+        # Auto-derive overall budget from per-section cap when caller didn't set it.
+        if max_iterations is None:
+            max_iterations = max(50, len(sections) * max_per_section)
+
         # Phase 2: Execute each section
         total_iters_used = 0
-        # Budget: scale per section by step count, minimum 15, cap at 35
+        # Budget: scale per section by step count, minimum 15, cap at max_per_section (user-configurable)
         for s in sections:
             if not s.get("skip_reason") or s.get("api_workaround"):
                 n_steps = len(s.get("steps", []))
-                s["_budget"] = min(35, max(15, n_steps * 4))
+                s["_budget"] = min(max_per_section, max(15, n_steps * 4))
 
         for i, section in enumerate(sections):
             if section.get("skip_reason") and not section.get("api_workaround"):

@@ -46,6 +46,10 @@ _current_job = {
     "result": None,
     "guide_path": None,
     "output_path": None,
+    # Video-recording state (only populated when record_video is enabled)
+    "video_enabled": False,
+    "video_log_entries": [],   # [{"t": float, "level": str, "message": str, "wall": "HH:MM:SS"}]
+    "video_start_time": None,  # epoch seconds; reference for the JSONL t offsets
 }
 
 _websocket_clients: list[WebSocket] = []
@@ -63,9 +67,23 @@ async def broadcast(msg: dict):
 _main_loop = None  # Set when uvicorn starts
 
 def log_progress(message: str, level: str = "info"):
-    """Log a progress message and broadcast to UI."""
-    entry = {"time": time.strftime("%H:%M:%S"), "level": level, "message": message}
+    """Log a progress message and broadcast to UI.
+
+    When video recording is enabled, also captures a timestamped entry into
+    _current_job["video_log_entries"] so the side-by-side viewer can sync log
+    rows to video playback time.
+    """
+    wall = time.strftime("%H:%M:%S")
+    entry = {"time": wall, "level": level, "message": message}
     _current_job["progress"].append(entry)
+    # Capture a timestamped copy for the video viewer if recording is on.
+    if _current_job.get("video_enabled") and _current_job.get("video_start_time") is not None:
+        _current_job["video_log_entries"].append({
+            "t": round(time.time() - _current_job["video_start_time"], 3),
+            "level": level,
+            "message": message,
+            "wall": wall,
+        })
     # Broadcast to WebSocket clients — works from any thread
     try:
         if _main_loop and _main_loop.is_running():
@@ -124,6 +142,8 @@ async def start_recording(
     model: str = Form(""),
     use_chrome: bool = Form(False),
     okta_api_key: str = Form(""),
+    max_per_section: int = Form(25),
+    record_video: bool = Form(False),
 ):
     """Start the record-then-extract pipeline."""
     if _current_job["status"] not in ("idle", "done", "error"):
@@ -145,10 +165,13 @@ async def start_recording(
     _current_job["progress"] = []
     _current_job["result"] = None
 
+    # Clamp per-section iterations to a sane range to avoid foot-guns from manual edits.
+    max_per_section = max(15, min(100, int(max_per_section or 25)))
+
     # Run in background thread
     thread = threading.Thread(
         target=_run_pipeline,
-        args=(org_url, use_chrome),
+        args=(org_url, use_chrome, max_per_section, record_video),
         daemon=True,
     )
     thread.start()
@@ -215,6 +238,40 @@ async def download_recording():
     )
 
 
+@app.get("/api/download-video")
+async def download_video_bundle():
+    """Download a zip with the session video(s), synced log JSONL, and HTML viewer.
+
+    Available only when the run was started with 'Record video' enabled.
+    """
+    import zipfile
+    import io
+
+    recording_dir = Path("/tmp/lab-screenshot-app/recording")
+    video_dir = recording_dir / "video"
+    viewer = recording_dir / "recording-viewer.html"
+    log = recording_dir / "recording-log.jsonl"
+
+    if not video_dir.exists() or not viewer.exists():
+        return JSONResponse({"error": "No video bundle available — was the run started with 'Record video' on?"}, status_code=404)
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zf:
+        zf.write(str(viewer), "recording-viewer.html")
+        if log.exists():
+            zf.write(str(log), "recording-log.jsonl")
+        for webm in sorted(video_dir.glob("*.webm")):
+            zf.write(str(webm), f"video/{webm.name}")
+
+    buf.seek(0)
+    from fastapi.responses import StreamingResponse
+    return StreamingResponse(
+        buf,
+        media_type="application/zip",
+        headers={"Content-Disposition": "attachment; filename=lab-screenshot-video.zip"}
+    )
+
+
 @app.get("/api/debug-bundle")
 async def download_debug_bundle():
     """Download a zip with input guide, output, and logs for bug reporting."""
@@ -246,6 +303,11 @@ async def download_debug_bundle():
         meta_path = recording_dir / "recording.json"
         if meta_path.exists():
             zf.write(str(meta_path), "recording-metadata.json")
+
+        # Synced log JSONL (only present when video recording was enabled)
+        synced_log = recording_dir / "recording-log.jsonl"
+        if synced_log.exists():
+            zf.write(str(synced_log), "recording-log.jsonl")
 
     buf.seek(0)
     from fastapi.responses import StreamingResponse
@@ -303,9 +365,163 @@ async def websocket_endpoint(ws: WebSocket):
         _websocket_clients.remove(ws)
 
 
+# ---- Video viewer bundle ----
+
+def _build_video_bundle(video_dir: Path, recording_dir: Path, log_entries: list[dict]) -> None:
+    """Write recording-log.jsonl and recording-viewer.html alongside the captured webms.
+
+    The viewer pairs the largest webm in `video_dir` (assumed to be the main page,
+    where the bot spends most of its time) with the synced log. Other webms remain
+    in the bundle for users who want to inspect secondary tabs manually.
+    """
+    # Persist the synced log
+    jsonl_path = recording_dir / "recording-log.jsonl"
+    with jsonl_path.open("w", encoding="utf-8") as fh:
+        for e in log_entries:
+            fh.write(json.dumps(e, ensure_ascii=False) + "\n")
+
+    # Pick the primary video — largest webm by size (heuristic: main tab has most content)
+    webms = sorted(video_dir.glob("*.webm"), key=lambda p: p.stat().st_size, reverse=True)
+    primary = webms[0].name if webms else ""
+    others = [w.name for w in webms[1:]] if len(webms) > 1 else []
+
+    # Embed the log inline so the viewer is a single self-contained file.
+    log_json = json.dumps(log_entries, ensure_ascii=False)
+    others_json = json.dumps(others)
+
+    viewer_path = recording_dir / "recording-viewer.html"
+    viewer_path.write_text(_VIDEO_VIEWER_HTML
+        .replace("__PRIMARY_VIDEO__", primary)
+        .replace("__OTHER_VIDEOS_JSON__", others_json)
+        .replace("__LOG_JSON__", log_json), encoding="utf-8")
+
+
+_VIDEO_VIEWER_HTML = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Lab Screenshot — Session Recording</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #0f172a; color: #e2e8f0; display: flex; flex-direction: column; }
+  header { padding: 10px 16px; background: #1e293b; border-bottom: 1px solid #334155; display: flex; align-items: center; gap: 12px; }
+  header h1 { font-size: 14px; font-weight: 600; }
+  header .meta { font-size: 12px; color: #94a3b8; }
+  header select { margin-left: auto; padding: 4px 8px; background: #0f172a; color: #e2e8f0; border: 1px solid #334155; border-radius: 4px; font-size: 12px; }
+  main { flex: 1; display: flex; min-height: 0; }
+  .video-pane { flex: 1; display: flex; align-items: center; justify-content: center; background: #000; padding: 12px; min-width: 0; }
+  video { max-width: 100%; max-height: 100%; background: #000; }
+  .log-pane { width: 480px; min-width: 360px; max-width: 50vw; resize: horizontal; overflow: auto; background: #1e293b; border-left: 1px solid #334155; }
+  .log-entry { padding: 6px 12px; border-bottom: 1px solid #334155; cursor: pointer; font-size: 12px; line-height: 1.5; transition: background 80ms; }
+  .log-entry:hover { background: #334155; }
+  .log-entry.active { background: #2563eb; color: #fff; }
+  .log-entry.active .t { color: #bfdbfe; }
+  .log-entry .t { display: inline-block; width: 56px; color: #64748b; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
+  .log-entry .lvl { display: inline-block; width: 56px; color: #94a3b8; font-size: 10px; text-transform: uppercase; }
+  .log-entry .lvl.error { color: #f87171; }
+  .log-entry .lvl.human { color: #fbbf24; }
+  .log-entry .lvl.agent { color: #34d399; }
+  .log-entry .msg { color: inherit; }
+  .empty { padding: 24px; text-align: center; color: #64748b; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Lab Screenshot — Session Recording</h1>
+  <span class="meta">Click any log row to jump the video to that moment</span>
+  <select id="video-picker"></select>
+</header>
+<main>
+  <div class="video-pane">
+    <video id="player" controls></video>
+  </div>
+  <div class="log-pane" id="log-pane"></div>
+</main>
+<script>
+const PRIMARY = "__PRIMARY_VIDEO__";
+const OTHERS = __OTHER_VIDEOS_JSON__;
+const LOG = __LOG_JSON__;
+
+const player = document.getElementById('player');
+const pane = document.getElementById('log-pane');
+const picker = document.getElementById('video-picker');
+
+function fmtTime(s) {
+  if (s == null) return '--:--';
+  const m = Math.floor(s / 60);
+  const ss = Math.floor(s % 60);
+  return String(m).padStart(2, '0') + ':' + String(ss).padStart(2, '0');
+}
+
+function renderLog() {
+  pane.innerHTML = '';
+  if (!LOG || LOG.length === 0) {
+    const div = document.createElement('div');
+    div.className = 'empty';
+    div.textContent = 'No log entries captured.';
+    pane.appendChild(div);
+    return;
+  }
+  LOG.forEach((e, i) => {
+    const row = document.createElement('div');
+    row.className = 'log-entry';
+    row.dataset.idx = i;
+    row.dataset.t = e.t;
+    row.innerHTML = '<span class="t">' + fmtTime(e.t) + '</span>'
+      + '<span class="lvl ' + (e.level || 'info') + '">' + (e.level || 'info') + '</span>'
+      + '<span class="msg"></span>';
+    row.querySelector('.msg').textContent = e.message;
+    row.addEventListener('click', () => {
+      if (player.src) { player.currentTime = e.t; player.play(); }
+    });
+    pane.appendChild(row);
+  });
+}
+
+function highlight(currentT) {
+  const rows = pane.querySelectorAll('.log-entry');
+  let active = -1;
+  for (let i = 0; i < rows.length; i++) {
+    const t = parseFloat(rows[i].dataset.t);
+    if (t <= currentT) active = i; else break;
+  }
+  rows.forEach((r, i) => r.classList.toggle('active', i === active));
+  if (active >= 0) {
+    const row = rows[active];
+    const r = row.getBoundingClientRect();
+    const p = pane.getBoundingClientRect();
+    if (r.top < p.top || r.bottom > p.bottom) {
+      row.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    }
+  }
+}
+
+function loadVideo(name) {
+  if (!name) return;
+  player.src = 'video/' + name;
+  player.load();
+}
+
+if (PRIMARY) {
+  picker.innerHTML = '<option value="' + PRIMARY + '">' + PRIMARY + ' (primary)</option>'
+    + OTHERS.map(n => '<option value="' + n + '">' + n + '</option>').join('');
+  picker.addEventListener('change', () => loadVideo(picker.value));
+  loadVideo(PRIMARY);
+} else {
+  picker.innerHTML = '<option>(no video found)</option>';
+}
+
+player.addEventListener('timeupdate', () => highlight(player.currentTime));
+renderLog();
+</script>
+</body>
+</html>"""
+
+
 # ---- Pipeline Runner ----
 
-def _run_pipeline(org_url: str, use_chrome: bool):
+def _run_pipeline(org_url: str, use_chrome: bool, max_per_section: int = 25, record_video: bool = False):
     """Run the full record-then-extract pipeline in a background thread."""
     from .guide import parse_markers, replace_markers
     from .recorder import GuideRecorder
@@ -315,14 +531,24 @@ def _run_pipeline(org_url: str, use_chrome: bool):
     guide_path = Path(_current_job["guide_path"])
     output_path = Path(_current_job["output_path"])
     recording_dir = Path("/tmp/lab-screenshot-app/recording")
+    video_dir = recording_dir / "video"
 
     if recording_dir.exists():
         shutil.rmtree(recording_dir)
+
+    # Reset video state regardless — set below if record_video is on.
+    _current_job["video_enabled"] = False
+    _current_job["video_log_entries"] = []
+    _current_job["video_start_time"] = None
 
     text = guide_path.read_text(encoding="utf-8")
     markers = parse_markers(text)
 
     log_progress(f"Loaded guide: {guide_path.name} ({len(markers)} markers)")
+    log_progress(f"Per-section iteration cap: {max_per_section}")
+    if record_video:
+        video_dir.mkdir(parents=True, exist_ok=True)
+        log_progress(f"Video recording: ON → {video_dir}")
 
     try:
         # ---- Setup: open browser for manual auth ----
@@ -335,6 +561,14 @@ def _run_pipeline(org_url: str, use_chrome: bool):
         os.makedirs(profile, exist_ok=True)
 
         chrome_kwargs = {"channel": "chrome"} if use_chrome else {}
+        video_kwargs = {}
+        if record_video:
+            # Playwright records one webm per Page in the context. Files are flushed
+            # on context.close(). Size matches the viewport for crisp playback.
+            video_kwargs = {
+                "record_video_dir": str(video_dir),
+                "record_video_size": {"width": 1440, "height": 1080},
+            }
 
         with sync_playwright() as p:
             context = p.chromium.launch_persistent_context(
@@ -346,7 +580,13 @@ def _run_pipeline(org_url: str, use_chrome: bool):
                     "--window-size=1440,1200",  # Larger window to prevent content cutoff
                 ],
                 **chrome_kwargs,
+                **video_kwargs,
             )
+            if record_video:
+                # Mark the t=0 reference for the viewer log alignment immediately
+                # after the context (and therefore the video) is up.
+                _current_job["video_start_time"] = time.time()
+                _current_job["video_enabled"] = True
             page = context.pages[0] if context.pages else context.new_page()
             page.goto(org_url, wait_until="networkidle", timeout=60000)
 
@@ -436,10 +676,18 @@ def _run_pipeline(org_url: str, use_chrome: bool):
                 log_progress(msg, "agent")
             recorder._log = patched_log
 
-            recording = recorder.record_guide(text)
+            recording = recorder.record_guide(text, max_per_section=max_per_section)
             context.close()
 
         log_progress(f"Pass 1 complete: {len(recording.frames)} frames captured")
+
+        # ---- Video viewer bundle ----
+        if record_video:
+            try:
+                _build_video_bundle(video_dir, recording_dir, _current_job["video_log_entries"])
+                log_progress(f"Video bundle ready → recording-viewer.html ({len(_current_job['video_log_entries'])} log entries synced)")
+            except Exception as e:
+                log_progress(f"Video bundle generation failed: {e}", "error")
 
         # ---- Pass 2: Select ----
         _current_job["status"] = "selecting"
@@ -476,6 +724,7 @@ def _run_pipeline(org_url: str, use_chrome: bool):
             "output_path": str(output_path),
             "screenshots": screenshot_paths,
             "frames_captured": len(recording.frames),
+            "video_available": record_video and (recording_dir / "recording-viewer.html").exists(),
         }
         log_progress(f"Done! {len(images)}/{len(markers)} markers replaced. Output: {output_path.name}")
 
@@ -597,7 +846,9 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; b
                     <li><strong>Starting URL</strong> — The URL where the lab begins (e.g., <code>https://labs.demo.okta.com/lab/your-lab-id</code>).</li>
                     <li><strong>AI Model</strong> — Claude Sonnet 4.6 is recommended for the best balance of speed and accuracy.</li>
                     <li><strong>Okta API Key</strong> (optional but recommended) — An API token (SSWS format) for the target Okta org. This enables the bot to perform operations like enrolling MFA factors for users via API, which is required for labs involving MFA enrollment steps that would normally need a mobile device. Generate one in the Okta Admin Console under Security &gt; API &gt; Tokens.</li>
+                    <li><strong>Max iterations per section</strong> — Caps how many tool calls (clicks, fills, scrolls, etc.) the bot may attempt per section before giving up or asking for help. Default 25 (range 15–100). Raise it (40–60) for guides with long forms, multi-page wizards, or complex policy edits where the bot needs more retries. Lower it (15–20) when iterating on guide development to fail fast.</li>
                     <li><strong>Use system Chrome</strong> — Check this if your organization's endpoint security blocks Playwright's bundled Chromium browser.</li>
+                    <li><strong>Record video</strong> — Captures a webm video of the bot's browser session and packages it with a synced log into a self-contained HTML viewer. Off by default — enable it when you want a shareable artifact (demos, bug reports, training reviews). Files are sizeable (~50–200 MB per run). After the run, the <em>Download Video Bundle</em> button appears alongside the other download options.</li>
                 </ul>
 
                 <h3 style="color:#1e293b;margin-top:16px;">Bot Chat Panel</h3>
@@ -613,6 +864,8 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; b
                 <ul>
                     <li><strong>Download Output</strong> — Saves the completed markdown with embedded screenshots</li>
                     <li><strong>Preview in Browser</strong> — Opens the output as a styled HTML page with rendered screenshots at <a href="/preview" target="_blank">/preview</a></li>
+                    <li><strong>Download Frames</strong> — Zip of every PNG captured during navigation, plus <code>recording.json</code> metadata. Useful for picking a different screenshot than the one Pass 2 chose.</li>
+                    <li><strong>Download Video Bundle</strong> (only shown when <em>Record video</em> was enabled) — Zip containing the session webm(s), a synced log JSONL, and <code>recording-viewer.html</code>. Open the HTML file in any browser to play the video alongside the console log; click any log row to seek the video to that moment.</li>
                     <li><strong>Export Debug Bundle</strong> — Downloads a zip containing the input guide, output, and full console log. Attach this to <a href="https://github.com/joevanhorn/lab-screenshot/issues" target="_blank">GitHub Issues</a> if you need to report a problem.</li>
                 </ul>
 
@@ -681,12 +934,22 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; b
                 <input type="password" id="okta-api-key" placeholder="SSWS 00abc..." autocomplete="off">
             </div>
         </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label>Max iterations per section <span style="color:#94a3b8;font-weight:normal">(15–100, default 25; raise for long forms / complex policies)</span></label>
+                <input type="number" id="max-per-section" min="15" max="100" step="1" value="25">
+            </div>
+        </div>
         <input type="hidden" id="llm-provider" value="litellm">
         <input type="hidden" id="api-key" value="sk-m4Lc0YlvjR0cjmDTR1qrJw">
         <input type="hidden" id="api-base" value="https://llm.atko.ai">
         <div class="checkbox-row">
             <input type="checkbox" id="use-chrome">
             <label for="use-chrome">Use system Chrome (avoids corporate endpoint blocks)</label>
+        </div>
+        <div class="checkbox-row">
+            <input type="checkbox" id="record-video">
+            <label for="record-video">Record video of the bot's session <span style="color:#94a3b8;font-weight:normal">(produces an HTML viewer with the video and console log side-by-side; ~50–200 MB per run)</span></label>
         </div>
         <div class="btn-row">
             <button class="btn btn-primary" id="start-btn" onclick="startRecording()" disabled>Start Recording</button>
@@ -735,6 +998,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; b
                 <button class="btn btn-primary" onclick="downloadOutput()">Download Output</button>
                 <a href="/preview" target="_blank" class="btn btn-secondary" style="text-decoration:none;">Preview in Browser</a>
                 <a href="/api/download-recording" class="btn btn-secondary" style="text-decoration:none;" title="Downloads all captured frame screenshots and metadata as a zip">Download Frames</a>
+                <a id="download-video-btn" href="/api/download-video" class="btn btn-secondary" style="text-decoration:none;display:none;" title="Downloads the session video, synced log, and HTML viewer as a zip. Open recording-viewer.html to play the video with the console log side-by-side.">Download Video Bundle</a>
                 <a href="/api/debug-bundle" class="btn btn-secondary" style="text-decoration:none;" title="Downloads input guide, output, and console logs as a zip — useful for bug reports">Export Debug Bundle</a>
                 <button class="btn btn-secondary" onclick="resetApp()">New Guide</button>
             </div>
@@ -907,6 +1171,8 @@ async function startRecording() {
     form.append('model', document.getElementById('model').value);
     form.append('use_chrome', document.getElementById('use-chrome').checked);
     form.append('okta_api_key', document.getElementById('okta-api-key').value);
+    form.append('max_per_section', document.getElementById('max-per-section').value);
+    form.append('record_video', document.getElementById('record-video').checked);
 
     await fetch('/api/start', { method: 'POST', body: form });
 
@@ -960,6 +1226,9 @@ function showResult(result) {
     document.getElementById('result-count').textContent = result.markers_replaced + '/' + result.markers_total + ' screenshots captured';
     document.getElementById('result-sub').textContent = result.frames_captured + ' frames recorded during Pass 1';
     document.getElementById('status-text').textContent = 'Done!';
+    // Show the video bundle button only if a video was actually recorded.
+    const vbtn = document.getElementById('download-video-btn');
+    if (vbtn) vbtn.style.display = result.video_available ? '' : 'none';
 }
 
 async function downloadOutput() {
