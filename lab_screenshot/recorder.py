@@ -492,8 +492,9 @@ If you are working in the Okta Admin Console, these patterns will help:
   1. `scroll(down, 2000)` — jump straight to the bottom
   2. Click Save: try `input[value="Save"]` or `[data-se="save"]`
   3. A "Save anyway" confirmation will appear. Click it with: `input[value="Save anyway"]` (it's an input, not a button!)
-  4. After clicking Save anyway, Okta may require **admin MFA step-up authentication** (a push notification). If you see a loading spinner ("•••") or text about "protected action" or "step-up authentication":
-     - Call `ask_human` with: "Please approve the MFA push notification on your device to save the policy change. Let me know when done."
+  4. After clicking Save anyway, Okta may require **admin MFA step-up authentication**. If you see text about "protected action" or "step-up authentication" or an authenticator selection screen:
+     - FIRST: Look for a "Send push" or "Verify" or "Select" button in the MFA prompt and CLICK IT to trigger the push notification to the admin's phone
+     - THEN: Call `ask_human` with: "I clicked Send Push to trigger the MFA notification. Please approve it on your device and let me know when done."
      - Then `wait(15000)` for the approval to complete
      - The dialog should close automatically after MFA approval
   DO NOT scroll through intermediate fields to verify them. DO NOT keep clicking Save — it worked the first time.
@@ -555,8 +556,8 @@ Use the browser_api tool with SSWS token (must be provided in app UI):
                         parts.append(f'⚠ A DIALOG is open. Text: "{dialog_text[:300]}"')
                         # Detect admin MFA step-up authentication
                         dt_lower = dialog_text.lower()
-                        if any(kw in dt_lower for kw in ['protected action', 'step-up', 'step up', 'verification', 'push notification', '•••', '...']):
-                            parts.append('⚠ This appears to be an ADMIN MFA STEP-UP prompt. Call ask_human to request the admin approve the push notification, then wait(15000) for completion.')
+                        if any(kw in dt_lower for kw in ['protected action', 'step-up', 'step up', 'push notification', 'send push', 'okta verify', 'select']):
+                            parts.append('⚠ ADMIN MFA STEP-UP: First click "Send push" or "Verify" or "Select" button to trigger the push notification. THEN call ask_human to tell the admin to approve it on their phone.')
                     if progress_log:
                         parts.append("## YOUR PROGRESS SO FAR (do NOT repeat completed actions)")
                         for entry in progress_log[-10:]:
