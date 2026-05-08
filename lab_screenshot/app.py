@@ -456,10 +456,11 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; b
 .status-bar .step.active { color: #3b82f6; font-weight: 600; }
 .status-bar .step.done { color: #22c55e; }
 
-.log { background: #0f172a; border-radius: 8px; padding: 16px; max-height: 300px; overflow-y: auto; font-family: monospace; font-size: 12px; line-height: 1.6; }
-.log .entry { color: #94a3b8; }
+.log { background: #0f172a; border-radius: 8px; padding: 16px; max-height: 600px; overflow-y: auto; font-family: monospace; font-size: 12px; line-height: 1.6; }
+.log .entry { color: #94a3b8; word-wrap: break-word; overflow-wrap: break-word; white-space: pre-wrap; }
 .log .entry.error { color: #ef4444; }
 .log .entry.agent { color: #38bdf8; }
+.log .entry.human { color: #f59e0b; font-weight: bold; }
 .log .time { color: #475569; margin-right: 8px; }
 
 .result { text-align: center; padding: 20px; }
