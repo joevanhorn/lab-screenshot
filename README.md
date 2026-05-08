@@ -1,137 +1,139 @@
-# lab-screenshot
+# Lab Screenshot Bot
 
-Automated screenshot tool for Okta Admin Console lab guides. Write a markdown guide with `[SCREENSHOT: description]` markers, point it at your Okta org, and get back the same guide with real screenshots embedded as inline base64 images.
+AI-powered browser automation that reads Okta lab guides, follows the steps, and captures screenshots automatically. Give it a markdown guide with `[SCREENSHOT: description]` markers, and it produces the same guide with real screenshots embedded.
 
 ## Install
 
+### One-line install (macOS / Linux)
+
 ```bash
-cd modules/lab-screenshot
+curl -sSL https://raw.githubusercontent.com/joevanhorn/lab-screenshot/main/install.sh | bash
+```
+
+This will:
+- Clone the repo to `~/lab-screenshot`
+- Create a Python virtual environment
+- Install all dependencies
+- Download the Playwright Chromium browser
+
+### Manual install
+
+```bash
+git clone https://github.com/joevanhorn/lab-screenshot.git
+cd lab-screenshot
+python3 -m venv venv
+source venv/bin/activate
 pip install -e .
 playwright install chromium
 ```
 
+### Requirements
+- Python 3.10+
+- git
+
 ## Quick Start
 
 ```bash
-# 1. Check what markers are in a guide
-lab-screenshot check guides/my-guide.md
-
-# 2. Process the guide (interactive — prompts for navigation at each marker)
-lab-screenshot run guides/my-guide.md \
-  --org https://your-org.okta.com \
-  --username bot@your-org.com \
-  --totp-secret YOUR_TOTP_SECRET
-
-# 3. Or provide page paths upfront (non-interactive)
-lab-screenshot run guides/my-guide.md \
-  --org https://your-org.okta.com \
-  --username bot@your-org.com \
-  --totp-secret YOUR_TOTP_SECRET \
-  --pages "/admin/apps/active,/admin/users,/admin/oauth2/as" \
-  --no-prompt \
-  --save-pngs
+cd ~/lab-screenshot
+source venv/bin/activate
+lab-screenshot app
 ```
 
-## Commands
+Open **http://localhost:8384** in your browser, then:
 
-### `lab-screenshot check <guide.md>`
-
-Dry run — parse the guide and list all `[SCREENSHOT: ...]` markers without taking any screenshots.
-
-### `lab-screenshot login`
-
-Authenticate headlessly and save a browser session for later use.
-
-```bash
-lab-screenshot login \
-  --org https://your-org.okta.com \
-  --username bot@your-org.com \
-  --totp-secret YOUR_TOTP_SECRET
-```
-
-### `lab-screenshot capture`
-
-Take a single screenshot of an admin console page.
-
-```bash
-lab-screenshot capture \
-  --org https://your-org.okta.com \
-  --path /admin/dashboard \
-  -o screenshot.png
-```
-
-### `lab-screenshot run <guide.md>`
-
-Full pipeline: authenticate, navigate to each marker, capture, replace markers with base64 images, write output.
-
-```bash
-lab-screenshot run guide.md \
-  --org https://your-org.okta.com \
-  --username bot@your-org.com \
-  --totp-secret YOUR_TOTP_SECRET \
-  -o guide-with-screenshots.md \
-  --save-pngs
-```
-
-**Navigation modes:**
-
-| Flag | Behavior |
-|------|----------|
-| (default) | Interactive — prompts for URL path at each marker |
-| `--pages "/path1,/path2,/path3"` | Pre-defined paths mapped to markers by index |
-| `--no-prompt` | Capture whatever page is currently showing |
+1. **Upload** a markdown guide with `[SCREENSHOT: ...]` markers
+2. **Configure** the starting URL, AI model, and optionally an Okta API key
+3. **Start Recording** — a browser window opens
+4. **Authenticate** — log into the Okta org, open needed tabs, navigate to the starting point
+5. **Hand Off to Bot** — the bot takes over and follows the guide
+6. **Respond when asked** — approve MFA pushes, answer questions via the chat panel
+7. **Download** the completed guide with embedded screenshots
 
 ## Guide Format
 
-Guides are plain markdown. Place `[SCREENSHOT: description]` markers where you want screenshots:
+Write your lab guide in markdown with `[SCREENSHOT: description]` markers where you want screenshots:
 
 ```markdown
-# Lab: Create an Auth Server
+## Step 1: Configure the Policy
 
-1. Navigate to **Security > API > Authorization Servers**
-2. Click **Add Authorization Server**
-3. Fill in the name and audience
-4. Click **Save**
+1. Navigate to **Security > Authentication Policies**
+2. Click on **TaskVantage - Apps**
+3. Click **Actions > Edit** next to the Employee Access rule
+4. Change "User must authenticate with" to **Password + Another factor**
+5. Click **Save**
 
-[SCREENSHOT: Auth server settings page showing name and audience]
+[SCREENSHOT: Authentication policy rule configured with MFA enabled]
 
-## Add Scopes
+## Step 2: Verify
 
-1. Click the **Scopes** tab
-2. Add scopes: sfdc:read, sfdc:write, snow:read, snow:write, mcp:read
+1. Run the attack simulator again
+2. Observe that the attack fails
 
-[SCREENSHOT: Scopes tab with all five scopes listed]
+[SCREENSHOT: Attack results showing 0 successful attempts]
 ```
 
-After processing, each marker becomes:
+## Features
 
-```markdown
-![Auth server settings page showing name and audience](data:image/png;base64,iVBOR...)
+- **AI-powered navigation** — Claude reads the guide, comprehends the steps, and executes them like a human tester
+- **Visual reasoning** — sees screenshots after every action to verify results and decide next steps
+- **Okta Admin Console expertise** — built-in knowledge of sidebar navigation, custom dropdowns, policy editing, and common URL paths
+- **API operations** — enrolls MFA factors, manages users, and performs other admin operations via Okta API when browser-only isn't possible
+- **Human-in-the-loop** — asks for help when stuck or when admin MFA approval is needed, with desktop notifications and audio alerts
+- **Self-debugging** — uses DOM inspection to diagnose click failures and adapt selectors
+- **Multi-tab awareness** — detects new tabs (MFA challenges, redirects) and switches between them
+
+## Configuration
+
+| Setting | Description |
+|---------|-------------|
+| **Starting URL** | Where the lab begins (e.g., `https://labs.demo.okta.com/lab/your-lab-id`) |
+| **AI Model** | Claude Sonnet 4.6 recommended. Opus 4.6 available for complex guides. |
+| **Okta API Key** | Optional SSWS token for the target org. Enables factor enrollment and other admin API operations. Generate in Okta Admin Console under Security > API > Tokens. |
+| **Use system Chrome** | Check if corporate endpoint security blocks Playwright's Chromium. |
+
+## After a Run
+
+| Button | Description |
+|--------|-------------|
+| **Download Output** | Completed markdown with base64 screenshots embedded |
+| **Preview in Browser** | Rendered HTML view at `/preview` |
+| **Download Recording** | Zip of all frame PNGs captured during navigation |
+| **Export Debug Bundle** | Zip of input guide + output + console log for bug reports |
+
+## Troubleshooting
+
+- **Bot can't find an element** — it tries multiple selectors, then uses `inspect_element` to debug, then asks for help
+- **Screenshots look wrong** — don't minimize or cover the browser window during the run
+- **API calls failing** — verify the Okta API key has Super Admin permissions
+- **MFA prompt not appearing** — ensure Okta Verify is installed with push notifications enabled
+
+**Report issues**: [github.com/joevanhorn/lab-screenshot/issues](https://github.com/joevanhorn/lab-screenshot/issues)
+
+Use the "Export Debug Bundle" button to attach the input guide, output, and logs to your issue.
+
+## CLI Commands
+
+The web UI (`lab-screenshot app`) is the recommended way to use the tool. CLI commands are also available:
+
+```bash
+# Web UI (recommended)
+lab-screenshot app
+
+# Check markers in a guide
+lab-screenshot check guide.md
+
+# Record with AI agent (headless setup)
+lab-screenshot record guide.md --org https://labs.demo.okta.com/... --setup
+
+# Single screenshot capture
+lab-screenshot capture --org https://your-org.okta.com --path /admin/dashboard -o screenshot.png
 ```
 
-## Authentication
+## Documentation
 
-The tool authenticates headlessly via the Okta authn API:
-1. `POST /api/v1/authn` → session token
-2. Cookie redirect → admin console OAuth
-3. Browser TOTP MFA (if `--totp-secret` provided, otherwise prompts)
-4. "Keep me signed in" auto-click
+- [Solution Overview](docs/SOLUTION-OVERVIEW.md) — architecture, design patterns, how it works
+- [Lessons Learned](docs/LESSONS-LEARNED.md) — technical challenges, what worked, recommendations
 
-**Requires an Okta-mastered user** (not AD-sourced) with admin access.
+## License
 
-## Options
-
-| Option | Default | Description |
-|--------|---------|-------------|
-| `--org` | (required) | Okta org URL |
-| `--username` | (prompts) | Okta username |
-| `--password` | (prompts) | Okta password |
-| `--totp-secret` | (prompts for code) | TOTP shared secret for automated MFA |
-| `-o, --output` | Overwrites input | Output file path |
-| `--pages` | (interactive) | Comma-separated URL paths per marker |
-| `--no-prompt` | false | Skip navigation prompts |
-| `--save-pngs` | false | Save individual PNGs alongside output |
-| `--width` | 1440 | Viewport width |
-| `--height` | 900 | Viewport height |
-| `--delay` | 2000 | Post-navigation delay (ms) |
-| `--visible` | false | Show browser window |
+Internal tool — not for external distribution.
