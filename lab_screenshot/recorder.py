@@ -483,12 +483,14 @@ If you are working in the Okta Admin Console, these patterns will help:
 - The Edit Rule dialog is a SCROLLABLE modal with IF conditions at the top and THEN settings at the bottom
 - Use `scroll(down, 600)` to skip past the IF section and reach the THEN section
 - The THEN section contains: Access (Denied/Allowed), authentication requirements, MFA settings
-- **CRITICAL — Changing the "User must authenticate with" dropdown:**
-  This dropdown uses a custom library that hides the native `<select>`. Do NOT click `select` elements directly. Use this EXACT two-step approach:
-  **Step 1 — Open the dropdown:** `click` with selector `div[data-se="o-form-fieldset"]:has-text("User must authenticate") div.o-form-input`
-  **Step 2 — Select the option:** `click` with selector `text=Password + Another factor`
-  That's it. Do NOT try other selectors first. This approach works regardless of the dropdown library (Selectize, Chosen, or native).
-  If you accidentally open the IF section's dropdown instead, click `text=Any user type` to close it, scroll down to THEN, and try again with the exact selector above.
+- **Custom dropdowns (Selectize, Chosen, etc.):**
+  Okta uses custom dropdown libraries that HIDE the native `<select>` element and replace it with styled divs. Clicking the native `<select>` directly will NOT visually open the dropdown.
+  To change a custom dropdown:
+  1. **Find the dropdown's fieldset container.** Use `inspect_element` or `get_page_state` to find the wrapping `div[data-se="o-form-fieldset"]` that contains the label text you're looking for.
+  2. **Click the container's input area:** `click` with `div[data-se="o-form-fieldset"]:has-text("<label text>") div.o-form-input` — this opens the dropdown regardless of whether it's Selectize, Chosen, or native.
+  3. **Click the option text:** `click` with `text=<option you want>` — the dropdown should now be open showing options.
+  If you accidentally open the wrong dropdown, click the currently selected value to close it, then try the correct fieldset.
+  **DO NOT** spend iterations clicking native `<select>` elements or trying library-specific selectors (`.selectize-input`, `.chzn-container`). The fieldset approach above works universally.
 - **CRITICAL: After changing the dropdown, follow this EXACT sequence:**
   1. `scroll(down, 2000)` — jump straight to the bottom
   2. Click Save: try `input[value="Save"]` or `[data-se="save"]`
