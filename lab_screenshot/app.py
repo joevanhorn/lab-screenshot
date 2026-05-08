@@ -188,6 +188,33 @@ async def download_output():
     return JSONResponse({"error": "No output available"}, status_code=404)
 
 
+@app.get("/api/download-recording")
+async def download_recording():
+    """Download the recording frames as a zip."""
+    import zipfile
+    import io
+
+    recording_dir = Path("/tmp/lab-screenshot-app/recording")
+    if not recording_dir.exists():
+        return JSONResponse({"error": "No recording available"}, status_code=404)
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zf:
+        for f in sorted(recording_dir.glob("frame-*.png")):
+            zf.write(str(f), f.name)
+        meta = recording_dir / "recording.json"
+        if meta.exists():
+            zf.write(str(meta), "recording.json")
+
+    buf.seek(0)
+    from fastapi.responses import StreamingResponse
+    return StreamingResponse(
+        buf,
+        media_type="application/zip",
+        headers={"Content-Disposition": "attachment; filename=lab-screenshot-recording.zip"}
+    )
+
+
 @app.get("/api/debug-bundle")
 async def download_debug_bundle():
     """Download a zip with input guide, output, and logs for bug reporting."""
@@ -707,6 +734,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; b
             <div class="btn-row" style="justify-content:center">
                 <button class="btn btn-primary" onclick="downloadOutput()">Download Output</button>
                 <a href="/preview" target="_blank" class="btn btn-secondary" style="text-decoration:none;">Preview in Browser</a>
+                <a href="/api/download-recording" class="btn btn-secondary" style="text-decoration:none;" title="Downloads all captured frame screenshots as a zip">Download Recording</a>
                 <a href="/api/debug-bundle" class="btn btn-secondary" style="text-decoration:none;" title="Downloads input guide, output, and console logs as a zip — useful for bug reports">Export Debug Bundle</a>
                 <button class="btn btn-secondary" onclick="resetApp()">New Guide</button>
             </div>
