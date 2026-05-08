@@ -462,6 +462,51 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; b
 </div>
 
 <div class="container">
+    <!-- User Guide (collapsible) -->
+    <div class="card">
+        <details>
+            <summary style="cursor:pointer;font-weight:600;font-size:16px;color:#1e293b;">📖 How to Use This Tool</summary>
+            <div style="margin-top:12px;font-size:14px;color:#475569;line-height:1.8;">
+                <p>This bot automates screenshot capture for Okta lab guides. Give it a markdown guide with <code>[SCREENSHOT: description]</code> markers, and it will follow the guide steps, navigate the Okta Admin Console, and capture screenshots automatically.</p>
+
+                <h3 style="color:#1e293b;margin-top:16px;">Quick Start</h3>
+                <ol>
+                    <li><strong>Upload your guide</strong> — Select a .md file with <code>[SCREENSHOT: ...]</code> markers</li>
+                    <li><strong>Configure settings</strong> — Enter the starting URL and optionally an Okta API key</li>
+                    <li><strong>Start Recording</strong> — A browser window opens for you to authenticate</li>
+                    <li><strong>Authenticate</strong> — Log into the Okta org, open any needed tabs, navigate to the starting point</li>
+                    <li><strong>Hand Off to Bot</strong> — The bot takes over the browser and follows the guide</li>
+                    <li><strong>Respond when asked</strong> — The bot may ask for help (e.g., approve an MFA push)</li>
+                    <li><strong>Download output</strong> — Get the completed guide with embedded screenshots</li>
+                </ol>
+
+                <h3 style="color:#1e293b;margin-top:16px;">Settings</h3>
+                <ul>
+                    <li><strong>Starting URL</strong> — Where the lab begins (e.g., <code>https://labs.demo.okta.com/lab/your-lab-id</code>)</li>
+                    <li><strong>AI Model</strong> — Claude Sonnet 4.6 recommended for speed + accuracy</li>
+                    <li><strong>Okta API Key</strong> (optional) — An SSWS token for the target Okta org. Enables API operations like MFA factor enrollment that can't be done through the browser UI alone. Required for labs involving MFA setup.</li>
+                    <li><strong>Use system Chrome</strong> — Check this if corporate endpoint security blocks Playwright's Chromium</li>
+                </ul>
+
+                <h3 style="color:#1e293b;margin-top:16px;">Bot Chat Panel</h3>
+                <p>During recording, a chat panel appears where the bot can ask you questions and you can provide guidance. Common scenarios:</p>
+                <ul>
+                    <li><strong>MFA approval</strong> — The bot saved a security policy and needs you to approve the push notification on your phone</li>
+                    <li><strong>Navigation help</strong> — The bot is unsure which element to click</li>
+                    <li><strong>Clarification</strong> — The bot needs more context about what the guide means</li>
+                </ul>
+                <p>You'll get a desktop notification and an audible beep when the bot needs help. Allow browser notifications when prompted.</p>
+
+                <h3 style="color:#1e293b;margin-top:16px;">Tips</h3>
+                <ul>
+                    <li>Keep your phone nearby for MFA push approvals</li>
+                    <li>Don't interact with the bot's browser window while it's running</li>
+                    <li>For best results, start with a clean Okta org state</li>
+                    <li>After the run, visit <a href="/preview" target="_blank">/preview</a> to see the output rendered with screenshots</li>
+                </ul>
+            </div>
+        </details>
+    </div>
     <!-- Step indicators -->
     <div class="status-bar">
         <div class="step active" id="step-upload">1. Upload Guide</div>
@@ -539,18 +584,15 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; b
         <div class="log" id="log"></div>
     </div>
 
-    <!-- Human Input Prompt -->
-    <div class="card" id="card-human-input" style="display:none; border: 2px solid #f59e0b; background: #fffbeb;">
-        <h2 style="color:#b45309;">🙋 Bot Needs Your Help</h2>
-        <p id="human-question" style="color:#475569;font-size:15px;margin-bottom:12px;"></p>
-        <div class="form-row">
-            <div class="form-group">
-                <input type="text" id="human-answer" placeholder="Type your response (or just click Continue)..." onkeydown="if(event.key==='Enter')sendHumanResponse()">
-            </div>
+    <!-- Bot Chat / Human Input Panel -->
+    <div class="card" id="card-chat" style="display:none; border: 2px solid #3b82f6;">
+        <h2>💬 Bot Chat</h2>
+        <div id="chat-messages" style="max-height:300px;overflow-y:auto;margin-bottom:12px;padding:8px;background:#f8fafc;border-radius:6px;font-size:14px;"></div>
+        <div id="chat-input-row" style="display:flex;gap:8px;">
+            <input type="text" id="chat-input" placeholder="Type a message to the bot..." style="flex:1;padding:8px 12px;border:1px solid #e2e8f0;border-radius:6px;font-size:14px;" onkeydown="if(event.key==='Enter')sendHumanResponse()">
+            <button class="btn btn-primary" onclick="sendHumanResponse()">Send</button>
         </div>
-        <div class="btn-row">
-            <button class="btn btn-primary" onclick="sendHumanResponse()" style="background:#f59e0b;">Continue</button>
-        </div>
+        <div id="chat-waiting" style="display:none;padding:8px;color:#b45309;font-size:13px;">⏳ Waiting for your response...</div>
     </div>
 
     <!-- Result -->
@@ -579,33 +621,45 @@ function connectWS() {
         const msg = JSON.parse(e.data);
         if (msg.type === 'progress') {
             addLogEntry(msg);
-            // Check if this is a human input request
+            // Show chat panel when recording starts
+            if (msg.message && (msg.message.includes('Bot taking over') || msg.message.includes('recording pass'))) {
+                document.getElementById('card-chat').style.display = 'block';
+            }
+            // Bot asking for help
             if (msg.level === 'human' && msg.message.startsWith('🙋')) {
-                document.getElementById('human-question').textContent = msg.message.replace('🙋 BOT ASKS: ', '');
-                document.getElementById('card-human-input').style.display = 'block';
-                document.getElementById('human-answer').focus();
-                // Send browser notification
+                const question = msg.message.replace('🙋 BOT ASKS: ', '');
+                addChatMessage('bot', question);
+                document.getElementById('chat-waiting').style.display = 'block';
+                document.getElementById('chat-input').focus();
+                // Desktop notification
                 if (Notification.permission === 'granted') {
                     new Notification('🙋 Lab Screenshot Bot needs you!', {
-                        body: msg.message.replace('🙋 BOT ASKS: ', '').substring(0, 100),
+                        body: question.substring(0, 120),
                         requireInteraction: true,
                         tag: 'bot-help'
                     });
-                } else if (Notification.permission !== 'denied') {
-                    Notification.requestPermission();
                 }
-                // Also flash the tab title
+                // Flash tab title
                 let originalTitle = document.title;
-                let flash = setInterval(() => {
+                window._titleFlash = setInterval(() => {
                     document.title = document.title === '🙋 BOT NEEDS HELP' ? originalTitle : '🙋 BOT NEEDS HELP';
                 }, 1000);
-                window._titleFlash = flash;
-                // Play a beep
-                try { new Audio('data:audio/wav;base64,UklGRl9vT19teleVBQQEBAQEBAQEBAAAABAABAgAIABgAAQAGABAAEABgFmYWN0BAAAAAAAAABkYXRh').play(); } catch(e) {}
+                // Audible beep via Web Audio API
+                try {
+                    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+                    const osc = ctx.createOscillator();
+                    const gain = ctx.createGain();
+                    osc.connect(gain);
+                    gain.connect(ctx.destination);
+                    osc.frequency.value = 800;
+                    gain.gain.value = 0.3;
+                    osc.start();
+                    osc.stop(ctx.currentTime + 0.3);
+                } catch(e) {}
             }
-            // Hide prompt when human response is logged
+            // Human response logged
             if (msg.level === 'human' && msg.message.startsWith('👤')) {
-                document.getElementById('card-human-input').style.display = 'none';
+                document.getElementById('chat-waiting').style.display = 'none';
             }
         }
     };
@@ -626,13 +680,34 @@ function escapeHtml(s) {
     return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
 
+function addChatMessage(sender, text) {
+    const container = document.getElementById('chat-messages');
+    const div = document.createElement('div');
+    div.style.marginBottom = '8px';
+    div.style.padding = '8px 12px';
+    div.style.borderRadius = '8px';
+    if (sender === 'bot') {
+        div.style.background = '#fffbeb';
+        div.style.borderLeft = '3px solid #f59e0b';
+        div.innerHTML = '<strong style="color:#b45309;">🤖 Bot:</strong> ' + escapeHtml(text);
+    } else {
+        div.style.background = '#eff6ff';
+        div.style.borderLeft = '3px solid #3b82f6';
+        div.innerHTML = '<strong style="color:#1d4ed8;">👤 You:</strong> ' + escapeHtml(text);
+    }
+    container.appendChild(div);
+    container.scrollTop = container.scrollHeight;
+}
+
 async function sendHumanResponse() {
-    const answer = document.getElementById('human-answer').value || 'Continue';
+    const input = document.getElementById('chat-input');
+    const answer = input.value.trim() || 'Continue';
+    addChatMessage('human', answer);
+    input.value = '';
+    document.getElementById('chat-waiting').style.display = 'none';
     const form = new FormData();
     form.append('answer', answer);
     await fetch('/api/human-response', { method: 'POST', body: form });
-    document.getElementById('card-human-input').style.display = 'none';
-    document.getElementById('human-answer').value = '';
     // Stop title flash
     if (window._titleFlash) { clearInterval(window._titleFlash); document.title = 'Lab Screenshot'; }
 }
@@ -765,6 +840,8 @@ function resetApp() {
     document.getElementById('markers-list').style.display = 'none';
     document.getElementById('card-handoff').style.display = 'none';
     document.getElementById('card-progress').style.display = 'none';
+    document.getElementById('card-chat').style.display = 'none';
+    document.getElementById('chat-messages').innerHTML = '';
     document.getElementById('card-result').style.display = 'none';
     document.getElementById('start-btn').disabled = true;
     document.getElementById('log').innerHTML = '';
