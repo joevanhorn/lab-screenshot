@@ -196,7 +196,13 @@ After all sections execute, the vision model reviews the captured frame gallery:
 
 **Tab awareness**: The bot tracks the number of open browser tabs throughout each section. When a new tab opens (e.g., an MFA step-up challenge, an authentication redirect, or a link click), the bot detects it immediately and investigates to determine if the new tab is relevant to the current task. This is especially important for Okta's admin MFA flow, which can open a step-up authentication challenge in a new tab.
 
-**Stuck detection**: When the bot is past 60% of its iteration budget for a section, it receives suggestions to: check for new tabs, use `inspect_element` to debug click failures, or call `ask_human` for guidance. This prevents the bot from burning all iterations on a single stuck interaction.
+**Stuck detection**: Two layers of stuck detection prevent the bot from burning iterations on failed approaches:
+1. *Repetition detection*: When the last 3 progress entries target the same element, the bot gets a forced escalation to `ask_human`, tab checking, or a completely different approach.
+2. *Budget warning*: At 60% of the iteration budget, the bot receives suggestions to check tabs, use `inspect_element`, or ask for help.
+
+**Closed tab recovery**: Some actions (like MFA approval) cause tabs to close automatically. The bot checks page validity at the start of every iteration and after every tool call. If the current page is closed, it automatically switches to the best remaining tab (preferring the admin console) and logs the recovery.
+
+**Irrelevant dialog filtering**: The bot is instructed to ignore cookie consent banners, promotional popups, and other dialogs unrelated to the current task. Common cookie dialogs (OneTrust, generic accept buttons) are auto-dismissed at the start of each section.
 
 ### Technology Stack
 

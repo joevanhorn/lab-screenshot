@@ -109,6 +109,48 @@ Built an LLM-powered browser automation bot that follows Okta lab guides, naviga
 
 **Lesson**: Visible browser mode (`headless=False`) has less usable space than headless due to browser chrome. Always scroll elements into view before clicking. For apps with scrollable containers (not just page scroll), auto-detect the right scroll target.
 
+### 9. Closed Tab Recovery (MFA Tab Auto-Close)
+**Problem**: After the admin approves the MFA push notification, Okta automatically closes the MFA challenge tab. The bot's `self.page` reference was pointing at the now-closed tab, causing a crash: "Target page, context or browser has been closed."
+
+**Solution**:
+- Page validity check at the start of every iteration and after every tool execution
+- If the current page is closed, automatically switch to the best available tab (prefer admin console)
+- Log the recovery so the bot knows it switched tabs
+
+**Lesson**: Any action that opens a new tab can also close that tab unexpectedly (redirects, authentication flows, popups). The bot must never assume its current page reference is valid. Check before every interaction, and have a recovery strategy that picks the most relevant remaining tab.
+
+### 10. Tab Awareness and New Tab Detection
+**Problem**: The MFA step-up authentication opened in a new tab, but the bot was still looking at the original tab with a loading spinner. It spent many iterations watching the spinner without realizing the action it needed was in another tab.
+
+**Solution**:
+- Track tab count from the start of each section
+- Alert the bot immediately when a new tab appears: "NEW TAB DETECTED — use list_tabs to check what opened"
+- Include tab count in MFA detection hints
+- Add "Did a new tab open?" to the standard post-action reasoning checklist
+
+**Lesson**: Multi-tab awareness is critical for enterprise web apps. Authentication flows, policy saves, and link clicks can all open new tabs. The bot needs to monitor tab count changes and investigate new tabs proactively, not just when stuck.
+
+### 11. Stuck Loop Detection and Escalation
+**Problem**: The bot would repeat the same failed action (clicking a cookie dialog, retrying a selector) for 10+ iterations without trying a different approach or asking for help.
+
+**Solution**:
+- Detect when the last 3 progress entries target the same element
+- Force escalation: "🚨 YOU ARE STUCK — call ask_human, check tabs, use inspect_element, or try something different"
+- At 60% of iteration budget, suggest recovery strategies
+- Explicit instruction to ignore irrelevant dialogs (cookies, promotions) rather than trying to dismiss them
+
+**Lesson**: LLMs can get stuck in loops where they keep trying variations of the same failed approach. Explicit loop detection with forced escalation to `ask_human` breaks the cycle. The human can provide context the bot doesn't have ("ignore that dialog" or "the button is actually in a different tab").
+
+### 12. Cookie/Consent Dialog Hallucination
+**Problem**: The bot reported seeing a cookie consent dialog and spent 8 iterations trying to dismiss it, but the dialog wasn't actually visible on screen. It was either in the DOM but off-viewport, or a vision hallucination.
+
+**Solution**:
+- Auto-dismiss common cookie dialogs at section start (OneTrust, generic accept buttons)
+- System prompt: "Ignore cookie/consent banners entirely. Use force:true if something blocks your click."
+- Only interact with dialogs relevant to the current task
+
+**Lesson**: LLMs can hallucinate UI elements, especially when `get_page_state` returns elements that are technically in the DOM but not meaningfully visible. The system prompt should explicitly tell the bot which types of dialogs to ignore, and encourage using `force: true` on clicks rather than trying to dismiss phantom overlays.
+
 ---
 
 ## What Worked Well
