@@ -304,8 +304,26 @@ def _run_pipeline(org_url: str, use_chrome: bool):
                 _current_job["human_question"] = question
                 _current_job["human_answer"] = None
                 log_progress(f"🙋 BOT ASKS: {question}", "human")
-                # Wait for human response (polled via /api/human-response)
-                timeout = 120  # 2 minutes max
+                # Also prompt in terminal for convenience
+                print(f"\n{'='*60}", file=sys.stderr)
+                print(f"🙋 BOT ASKS: {question}", file=sys.stderr)
+                print(f"   Respond in the web UI chat, or type here:", file=sys.stderr)
+                print(f"{'='*60}", file=sys.stderr)
+
+                # Start a thread to read from stdin (terminal) as backup
+                import threading
+                def _read_stdin():
+                    try:
+                        line = input().strip()
+                        if line and _current_job.get("human_answer") is None:
+                            _current_job["human_answer"] = line
+                    except (EOFError, OSError):
+                        pass
+                stdin_thread = threading.Thread(target=_read_stdin, daemon=True)
+                stdin_thread.start()
+
+                # Wait for response from either web UI or terminal
+                timeout = 300  # 5 minutes
                 waited = 0
                 while _current_job.get("human_answer") is None and waited < timeout:
                     time.sleep(1)
@@ -604,6 +622,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; b
             <div class="sub" id="result-sub"></div>
             <div class="btn-row" style="justify-content:center">
                 <button class="btn btn-primary" onclick="downloadOutput()">Download Output</button>
+                <a href="/preview" target="_blank" class="btn btn-secondary" style="text-decoration:none;">Preview in Browser</a>
                 <button class="btn btn-secondary" onclick="resetApp()">New Guide</button>
             </div>
         </div>

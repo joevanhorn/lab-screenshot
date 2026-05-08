@@ -120,32 +120,46 @@ Frame metadata:
             litellm_kwargs["api_base"] = os.environ["LITELLM_API_BASE"]
             litellm_kwargs["api_key"] = os.environ.get("LITELLM_API_KEY", "")
 
-        try:
-            response = completion(**litellm_kwargs)
-            reply = response.choices[0].message.content
+        for attempt in range(2):  # Retry once on failure
+            try:
+                response = completion(**litellm_kwargs)
+                reply = response.choices[0].message.content
 
-            # Parse the JSON response
-            # Handle cases where Claude wraps in markdown code blocks
-            if "```" in reply:
-                reply = reply.split("```")[1]
-                if reply.startswith("json"):
-                    reply = reply[4:]
+                if not reply or not reply.strip():
+                    _log(f"  Empty response from LLM (attempt {attempt + 1})")
+                    continue
 
-            result = json.loads(reply.strip())
-            selected_idx = result.get("selected_frame")
-            reason = result.get("reason", "")
+                # Parse the JSON response
+                # Handle cases where Claude wraps in markdown code blocks
+                if "```" in reply:
+                    reply = reply.split("```")[1]
+                    if reply.startswith("json"):
+                        reply = reply[4:]
 
-            _log(f"  Selected frame {selected_idx}: {reason}")
+                result = json.loads(reply.strip())
+                selected_idx = result.get("selected_frame")
+                reason = result.get("reason", "")
 
-            # Find the frame and get its base64
-            selected = next((f for f in frame_images if f["index"] == selected_idx), None)
-            if selected:
-                results[marker.index] = f"data:image/png;base64,{selected['base64']}"
-            else:
-                _log(f"  WARNING: Frame {selected_idx} not found in gallery")
+                _log(f"  Selected frame {selected_idx}: {reason}")
 
-        except Exception as e:
-            _log(f"  ERROR selecting frame: {e}")
+                # Find the frame and get its base64
+                selected = next((f for f in frame_images if f["index"] == selected_idx), None)
+                if selected:
+                    results[marker.index] = f"data:image/png;base64,{selected['base64']}"
+                else:
+                    _log(f"  WARNING: Frame {selected_idx} not found in gallery")
+                break  # Success, no retry needed
+
+            except json.JSONDecodeError as e:
+                _log(f"  JSON parse error (attempt {attempt + 1}): {e}")
+                if attempt == 0:
+                    _log(f"  Retrying with fewer frames...")
+                    # Reduce frame count on retry
+                    if len(sampled) > 10:
+                        sampled = sampled[::2]  # Take every other frame
+            except Exception as e:
+                _log(f"  ERROR selecting frame: {e}")
+                break
 
     _log(f"Selected {len(results)}/{len(markers)} frames")
     return results
