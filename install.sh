@@ -66,7 +66,23 @@ pip install -e . -q
 # Install Playwright Chromium
 echo ""
 echo "Installing Playwright Chromium browser..."
-python3 -m playwright install chromium
+if NODE_TLS_REJECT_UNAUTHORIZED=0 python3 -m playwright install chromium 2>/dev/null; then
+    echo "✓ Playwright Chromium installed"
+elif python3 -m playwright install chromium 2>/dev/null; then
+    echo "✓ Playwright Chromium installed"
+else
+    echo ""
+    echo "⚠ Could not download Playwright Chromium."
+    echo "  This often happens behind corporate proxies/firewalls."
+    echo ""
+    echo "  Workaround: Use your system Chrome instead."
+    echo "  When running the app, check the 'Use system Chrome' checkbox."
+    echo ""
+    echo "  Or manually install Playwright Chromium later:"
+    echo "    cd $INSTALL_DIR && source venv/bin/activate"
+    echo "    NODE_TLS_REJECT_UNAUTHORIZED=0 playwright install chromium"
+    echo ""
+fi
 python3 -m playwright install-deps chromium 2>/dev/null || true
 
 # Create a launcher script in a common PATH location
