@@ -180,6 +180,47 @@ async def download_output():
     return JSONResponse({"error": "No output available"}, status_code=404)
 
 
+@app.get("/api/debug-bundle")
+async def download_debug_bundle():
+    """Download a zip with input guide, output, and logs for bug reporting."""
+    import zipfile
+    import io
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zf:
+        # Input guide
+        guide_path = _current_job.get("guide_path")
+        if guide_path and Path(guide_path).exists():
+            zf.write(guide_path, f"input-guide{Path(guide_path).suffix}")
+
+        # Output
+        output_path = _current_job.get("output_path")
+        if output_path and Path(output_path).exists():
+            zf.write(output_path, f"output{Path(output_path).suffix}")
+
+        # Console log
+        log_text = "\n".join(
+            f"[{e['time']}] [{e.get('level', 'info')}] {e['message']}"
+            for e in _current_job.get("progress", [])
+        )
+        if log_text:
+            zf.writestr("console-log.txt", log_text)
+
+        # Recording metadata
+        recording_dir = Path("/tmp/lab-screenshot-app/recording")
+        meta_path = recording_dir / "recording.json"
+        if meta_path.exists():
+            zf.write(str(meta_path), "recording-metadata.json")
+
+    buf.seek(0)
+    from fastapi.responses import StreamingResponse
+    return StreamingResponse(
+        buf,
+        media_type="application/zip",
+        headers={"Content-Disposition": "attachment; filename=lab-screenshot-debug-bundle.zip"}
+    )
+
+
 @app.get("/preview")
 async def preview_output():
     """Render the output markdown as HTML with embedded images."""
@@ -624,6 +665,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; b
             <div class="btn-row" style="justify-content:center">
                 <button class="btn btn-primary" onclick="downloadOutput()">Download Output</button>
                 <a href="/preview" target="_blank" class="btn btn-secondary" style="text-decoration:none;">Preview in Browser</a>
+                <a href="/api/debug-bundle" class="btn btn-secondary" style="text-decoration:none;" title="Downloads input guide, output, and console logs as a zip — useful for bug reports">Export Debug Bundle</a>
                 <button class="btn btn-secondary" onclick="resetApp()">New Guide</button>
             </div>
         </div>
