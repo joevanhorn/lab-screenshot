@@ -91,7 +91,9 @@ Write your lab guide in markdown with `[SCREENSHOT: description]` markers where 
 | **Starting URL** | Where the lab begins (e.g., `https://labs.demo.okta.com/lab/your-lab-id`) |
 | **AI Model** | Claude Sonnet 4.6 recommended. Opus 4.6 available for complex guides. |
 | **Okta API Key** | Optional SSWS token for the target org. Enables factor enrollment and other admin API operations. Generate in Okta Admin Console under Security > API > Tokens. |
+| **Max iterations per section** | Cap on how many tool-call iterations each section can use before the bot gives up or escalates. Default 25 (range 15–100). Raise for long forms or complex policies; lower if you want to fail fast during testing. |
 | **Use system Chrome** | Check if corporate endpoint security blocks Playwright's Chromium. |
+| **Record video** | Captures a webm of the bot's browser session and produces a self-contained HTML viewer that plays the video alongside the synced console log. Off by default — files are sizeable (~50–200 MB per run). |
 
 ## After a Run
 
@@ -100,6 +102,7 @@ Write your lab guide in markdown with `[SCREENSHOT: description]` markers where 
 | **Download Output** | Completed markdown with base64 screenshots embedded |
 | **Preview in Browser** | Rendered HTML view at `/preview` |
 | **Download Frames** | Zip of all frame PNGs and metadata captured during navigation |
+| **Download Video Bundle** | Only shown if **Record video** was enabled. Zip containing the session webm(s), the synced log JSONL, and `recording-viewer.html` — open the HTML file to play the video with the console log side-by-side and click any log entry to seek the video. |
 | **Export Debug Bundle** | Zip of input guide + output + console log for bug reports |
 
 ## Troubleshooting
