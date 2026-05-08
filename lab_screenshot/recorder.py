@@ -600,7 +600,20 @@ Use the browser_api tool with SSWS token (must be provided in app UI):
                             parts.append(f"- {entry}")
                         parts.append(f"\nYou have taken {len(progress_log)} actions so far. Do NOT repeat actions you have already completed successfully.")
 
-                    # Stuck detection: if we're past 60% of iterations, suggest checking tabs or asking for help
+                    # Repetition detection: if the last 3 actions look similar, the bot is stuck
+                    if len(progress_log) >= 3:
+                        recent = progress_log[-3:]
+                        # Check if all 3 recent actions target the same element/area
+                        import re
+                        targets = []
+                        for entry in recent:
+                            # Extract the key target from entries like "Clicked 'text=Security' → ..."
+                            match = re.search(r"Clicked '([^']{5,})'|Scrolled|API:|Selected", entry)
+                            targets.append(match.group(0)[:30] if match else entry[:30])
+                        if len(set(targets)) == 1:
+                            parts.append(f"\n🚨 YOU ARE STUCK: Your last 3 actions were all the same ({targets[0]}). This approach is not working. You MUST try something different: (1) call ask_human to describe what you see and ask for guidance, (2) use list_tabs to check other tabs, (3) use inspect_element to understand why the click isn't working, or (4) try a completely different selector or approach.")
+
+                    # Iteration budget warning
                     if iteration > max_iterations * 0.6:
                         parts.append(f"\n⚠ You are on iteration {iteration + 1}/{max_iterations}. If you are stuck, try: (1) list_tabs to check if something opened in another tab, (2) inspect_element to debug a click that isn't working, (3) ask_human for guidance.")
 
