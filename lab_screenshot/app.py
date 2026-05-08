@@ -180,6 +180,42 @@ async def download_output():
     return JSONResponse({"error": "No output available"}, status_code=404)
 
 
+@app.get("/preview")
+async def preview_output():
+    """Render the output markdown as HTML with embedded images."""
+    path = _current_job.get("output_path")
+    if not path or not Path(path).exists():
+        return HTMLResponse("<h1>No output available yet</h1><p>Run a guide first.</p>")
+    md_content = Path(path).read_text(encoding="utf-8")
+    # Simple markdown → HTML conversion (handles images, headers, paragraphs)
+    import re
+    html = md_content
+    # Headers
+    html = re.sub(r'^### (.+)$', r'<h3>\1</h3>', html, flags=re.MULTILINE)
+    html = re.sub(r'^## (.+)$', r'<h2>\1</h2>', html, flags=re.MULTILINE)
+    html = re.sub(r'^# (.+)$', r'<h1>\1</h1>', html, flags=re.MULTILINE)
+    # Images (base64 embedded)
+    html = re.sub(r'!\[([^\]]*)\]\((data:image/[^)]+)\)', r'<figure><img src="\2" alt="\1" style="max-width:100%;border:1px solid #e0e0e0;border-radius:8px;margin:16px 0;"><figcaption style="color:#666;font-size:13px;margin-top:4px;">\1</figcaption></figure>', html)
+    # Bold
+    html = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', html)
+    # Italic
+    html = re.sub(r'\*(.+?)\*', r'<em>\1</em>', html)
+    # Tables
+    html = re.sub(r'^\|(.+)\|$', lambda m: '<tr>' + ''.join(f'<td style="padding:8px;border:1px solid #e0e0e0;">{c.strip()}</td>' for c in m.group(1).split('|')) + '</tr>', html, flags=re.MULTILINE)
+    html = re.sub(r'(<tr>.*?</tr>\n?)+', r'<table style="border-collapse:collapse;margin:16px 0;">\g<0></table>', html)
+    # Line breaks
+    html = html.replace('\n\n', '</p><p>').replace('\n', '<br>')
+    return HTMLResponse(f"""<!DOCTYPE html>
+<html><head><title>Guide Preview</title>
+<style>
+body {{ font-family: -apple-system, sans-serif; max-width: 900px; margin: 40px auto; padding: 0 24px; line-height: 1.7; color: #1e293b; }}
+h1 {{ border-bottom: 2px solid #e2e8f0; padding-bottom: 8px; }}
+h2 {{ color: #334155; margin-top: 32px; }}
+p {{ color: #475569; }}
+table {{ width: 100%; }}
+</style></head><body><p>{html}</p></body></html>""")
+
+
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket):
     await ws.accept()
@@ -550,10 +586,22 @@ function connectWS() {
                 document.getElementById('human-answer').focus();
                 // Send browser notification
                 if (Notification.permission === 'granted') {
-                    new Notification('Lab Screenshot Bot', { body: 'The bot needs your input!', icon: '🙋' });
+                    new Notification('🙋 Lab Screenshot Bot needs you!', {
+                        body: msg.message.replace('🙋 BOT ASKS: ', '').substring(0, 100),
+                        requireInteraction: true,
+                        tag: 'bot-help'
+                    });
                 } else if (Notification.permission !== 'denied') {
                     Notification.requestPermission();
                 }
+                // Also flash the tab title
+                let originalTitle = document.title;
+                let flash = setInterval(() => {
+                    document.title = document.title === '🙋 BOT NEEDS HELP' ? originalTitle : '🙋 BOT NEEDS HELP';
+                }, 1000);
+                window._titleFlash = flash;
+                // Play a beep
+                try { new Audio('data:audio/wav;base64,UklGRl9vT19teleVBQQEBAQEBAQEBAAAABAABAgAIABgAAQAGABAAEABgFmYWN0BAAAAAAAAABkYXRh').play(); } catch(e) {}
             }
             // Hide prompt when human response is logged
             if (msg.level === 'human' && msg.message.startsWith('👤')) {
@@ -585,6 +633,8 @@ async function sendHumanResponse() {
     await fetch('/api/human-response', { method: 'POST', body: form });
     document.getElementById('card-human-input').style.display = 'none';
     document.getElementById('human-answer').value = '';
+    // Stop title flash
+    if (window._titleFlash) { clearInterval(window._titleFlash); document.title = 'Lab Screenshot'; }
 }
 
 // Request notification permission on load
