@@ -99,7 +99,7 @@ Write your lab guide in markdown with `[SCREENSHOT: description]` markers where 
 |--------|-------------|
 | **Download Output** | Completed markdown with base64 screenshots embedded |
 | **Preview in Browser** | Rendered HTML view at `/preview` |
-| **Download Recording** | Zip of all frame PNGs captured during navigation |
+| **Download Frames** | Zip of all frame PNGs and metadata captured during navigation |
 | **Export Debug Bundle** | Zip of input guide + output + console log for bug reports |
 
 ## Troubleshooting

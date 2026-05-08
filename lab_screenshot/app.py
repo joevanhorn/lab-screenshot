@@ -734,7 +734,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; b
             <div class="btn-row" style="justify-content:center">
                 <button class="btn btn-primary" onclick="downloadOutput()">Download Output</button>
                 <a href="/preview" target="_blank" class="btn btn-secondary" style="text-decoration:none;">Preview in Browser</a>
-                <a href="/api/download-recording" class="btn btn-secondary" style="text-decoration:none;" title="Downloads all captured frame screenshots as a zip">Download Recording</a>
+                <a href="/api/download-recording" class="btn btn-secondary" style="text-decoration:none;" title="Downloads all captured frame screenshots and metadata as a zip">Download Frames</a>
                 <a href="/api/debug-bundle" class="btn btn-secondary" style="text-decoration:none;" title="Downloads input guide, output, and console logs as a zip — useful for bug reports">Export Debug Bundle</a>
                 <button class="btn btn-secondary" onclick="resetApp()">New Guide</button>
             </div>
