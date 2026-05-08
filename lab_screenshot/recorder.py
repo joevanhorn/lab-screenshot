@@ -292,7 +292,7 @@ class GuideRecorder:
             if section.get("api_workaround"):
                 # Section can't be done via UI but has an API workaround
                 self._log(f"=== Section {i+1}/{len(sections)}: {section['title']} (API workaround) ===")
-                self._log(f"  Workaround: {section['api_workaround'][:100]}")
+                self._log(f"  Workaround: {section['api_workaround']}")
                 budget = min(20, section.get("_budget", 15))
                 iters_used = self._execute_section(section, max_iterations=budget)
             else:
@@ -380,7 +380,7 @@ Respond with ONLY a JSON object:
                 api = " [API WORKAROUND]" if s.get('api_workaround') else ""
                 markers_str = s.get('screenshot_markers', [])
                 ctx = s.get('context', '')
-                self._log(f"  • {s['title']}{skip}{api} (markers: {markers_str}) — {ctx[:60]}")
+                self._log(f"  • {s['title']}{skip}{api} (markers: {markers_str}) — {ctx}")
 
             return sections
 
@@ -729,12 +729,12 @@ Use the browser_api tool with SSWS token (must be provided in app UI):
                         answer = "No answer provided. Use your best judgment and continue."
             except (EOFError, OSError):
                 answer = "Human input not available. Use your best judgment and continue."
-            self._log(f"  👤 HUMAN: {answer[:100]}")
+            self._log(f"  👤 HUMAN: {answer}")
             return f"Human response: {answer}"
         elif name == "section_complete":
             reason = args.get("reason", "")
             if reason:
-                self._log(f"  ✓ Reason: {reason[:100]}")
+                self._log(f"  ✓ Reason: {reason}")
             return "Section marked complete."
         elif name == "scroll":
             direction = args.get("direction", "down")
