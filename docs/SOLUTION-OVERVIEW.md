@@ -170,6 +170,7 @@ The bot has access to these tools during execution:
 | `get_page_text` | Read visible text content |
 | `inspect_element` | DevTools-like DOM inspection for debugging click failures |
 | `list_tabs` / `switch_tab` | Multi-tab navigation |
+| `wait_for_new_tab` | Wait for and switch to a newly opened tab |
 | `wait` | Wait for time or element appearance |
 | `browser_api` | Make Okta API calls (SSWS token or session cookies) |
 | `ask_human` | Request human input via chat panel |
@@ -204,6 +205,8 @@ After all sections execute, the vision model reviews the captured frame gallery:
 
 **Irrelevant dialog filtering**: The bot is instructed to ignore cookie consent banners, promotional popups, and other dialogs unrelated to the current task. Common cookie dialogs (OneTrust, generic accept buttons) are auto-dismissed at the start of each section.
 
+**Cumulative progress tracking**: Each section maintains a log of actions taken and results observed. This log is included in every screenshot prompt so the bot knows what it has already done and doesn't repeat completed actions.
+
 ### Technology Stack
 
 | Component | Technology |
@@ -222,8 +225,9 @@ After all sections execute, the vision model reviews the captured frame gallery:
 lab-screenshot/
 ├── lab_screenshot/
 │   ├── app.py              # FastAPI web UI + pipeline orchestration
-│   ├── cli.py              # Command-line interface
+│   ├── cli.py              # Command-line interface (check, login, capture, run, app)
 │   ├── recorder.py         # Core: guide comprehension + section execution + tools
+│   ├── browser_agent.py    # Alternative LLM agent for manual run --agent mode
 │   ├── frame_selector.py   # Pass 2: vision-based frame selection
 │   ├── guide.py            # Markdown parser for [SCREENSHOT] markers
 │   └── screenshot.py       # Browser profile management + auth
@@ -232,8 +236,13 @@ lab-screenshot/
 │   ├── mock_okta_server.py     # Mock Okta Admin Console for testing
 │   ├── brute-force-guide.md    # Real lab guide (brute force + MFA)
 │   └── okta-policy-guide.md    # Focused test guide for policy editing
+├── packaging/
+│   ├── build-macos-pkg.sh      # macOS .pkg installer builder
+│   └── README.md               # Packaging and distribution instructions
 ├── docs/
 │   ├── SOLUTION-OVERVIEW.md    # This document
 │   └── LESSONS-LEARNED.md      # Development lessons for future reference
+├── .github/ISSUE_TEMPLATE/     # Bug report and UI pattern issue templates
+├── install.sh                  # One-line installer script
 └── pyproject.toml              # Package configuration
 ```

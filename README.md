@@ -46,7 +46,7 @@ Open **http://localhost:8384** in your browser, then:
 3. **Start Recording** — a browser window opens
 4. **Authenticate** — log into the Okta org, open needed tabs, navigate to the starting point
 5. **Hand Off to Bot** — the bot takes over and follows the guide
-6. **Respond when asked** — approve MFA pushes, answer questions via the chat panel
+6. **Respond when asked** — approve MFA pushes, answer questions via the web UI chat panel or the terminal
 7. **Download** the completed guide with embedded screenshots
 
 ## Guide Format
@@ -78,9 +78,11 @@ Write your lab guide in markdown with `[SCREENSHOT: description]` markers where 
 - **Visual reasoning** — sees screenshots after every action to verify results and decide next steps
 - **Okta Admin Console expertise** — built-in knowledge of sidebar navigation, custom dropdowns, policy editing, and common URL paths
 - **API operations** — enrolls MFA factors, manages users, and performs other admin operations via Okta API when browser-only isn't possible
-- **Human-in-the-loop** — asks for help when stuck or when admin MFA approval is needed, with desktop notifications and audio alerts
+- **Human-in-the-loop** — asks for help when stuck or when admin MFA approval is needed, with desktop notifications and audio alerts. Responds via the web UI chat panel or terminal.
 - **Self-debugging** — uses DOM inspection to diagnose click failures and adapt selectors
-- **Multi-tab awareness** — detects new tabs (MFA challenges, redirects) and switches between them
+- **Multi-tab awareness** — detects new tabs (MFA challenges, redirects) and switches between them automatically
+- **Stuck detection** — detects when it's repeating the same failed action and escalates: tries different approaches, checks other tabs, or asks the human for guidance
+- **Closed tab recovery** — if a tab closes unexpectedly (e.g., after MFA approval), automatically switches to a valid tab and continues
 
 ## Configuration
 
@@ -122,8 +124,11 @@ lab-screenshot app
 # Check markers in a guide
 lab-screenshot check guide.md
 
-# Record with AI agent (headless setup)
-lab-screenshot record guide.md --org https://labs.demo.okta.com/... --setup
+# Record with AI agent (opens browser for manual auth, then bot takes over)
+lab-screenshot run guide.md --org https://labs.demo.okta.com/... --agent
+
+# Headless login and save browser profile for later use
+lab-screenshot login --org https://your-org.okta.com --username bot@org.com --totp-secret SECRET
 
 # Single screenshot capture
 lab-screenshot capture --org https://your-org.okta.com --path /admin/dashboard -o screenshot.png
