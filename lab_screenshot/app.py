@@ -527,42 +527,66 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; b
         <details>
             <summary style="cursor:pointer;font-weight:600;font-size:16px;color:#1e293b;">📖 How to Use This Tool</summary>
             <div style="margin-top:12px;font-size:14px;color:#475569;line-height:1.8;">
-                <p>This bot automates screenshot capture for Okta lab guides. Give it a markdown guide with <code>[SCREENSHOT: description]</code> markers, and it will follow the guide steps, navigate the Okta Admin Console, and capture screenshots automatically.</p>
+                <p><strong>Lab Screenshot Bot</strong> automates screenshot capture for Okta lab guides. Give it a markdown guide with <code>[SCREENSHOT: description]</code> markers, and it will open a browser, follow the guide steps, navigate the Okta Admin Console, and capture screenshots at each marker point. The output is a completed guide with real screenshots embedded.</p>
 
-                <h3 style="color:#1e293b;margin-top:16px;">Quick Start</h3>
+                <h3 style="color:#1e293b;margin-top:16px;">Getting Started</h3>
                 <ol>
-                    <li><strong>Upload your guide</strong> — Select a .md file with <code>[SCREENSHOT: ...]</code> markers</li>
-                    <li><strong>Configure settings</strong> — Enter the starting URL and optionally an Okta API key</li>
-                    <li><strong>Start Recording</strong> — A browser window opens for you to authenticate</li>
-                    <li><strong>Authenticate</strong> — Log into the Okta org, open any needed tabs, navigate to the starting point</li>
-                    <li><strong>Hand Off to Bot</strong> — The bot takes over the browser and follows the guide</li>
-                    <li><strong>Respond when asked</strong> — The bot may ask for help (e.g., approve an MFA push)</li>
-                    <li><strong>Download output</strong> — Get the completed guide with embedded screenshots</li>
+                    <li><strong>Upload your guide</strong> — Click "Choose File" and select a markdown (.md) file containing your lab guide. The guide should have <code>[SCREENSHOT: description]</code> markers where you want screenshots. The bot will show how many markers it found.</li>
+                    <li><strong>Configure settings</strong> — Enter the starting URL for the lab, choose an AI model, and optionally provide an Okta API key (see Settings below).</li>
+                    <li><strong>Start Recording</strong> — Click the button. A browser window will open automatically.</li>
+                    <li><strong>Authenticate</strong> — In the browser window:
+                        <ul style="margin-top:4px;">
+                            <li>Log into the Okta org and any other platforms the lab requires</li>
+                            <li>Click <strong>Launch</strong> on any platform buttons (Okta, virtual desktops, etc.)</li>
+                            <li>Complete any MFA prompts</li>
+                            <li>Navigate to where you want the bot to start working</li>
+                        </ul>
+                    </li>
+                    <li><strong>Hand Off to Bot</strong> — When everything is ready, come back to this app and click the green button. The bot takes over the browser.</li>
+                    <li><strong>Respond when asked</strong> — The bot may ask for your help via the chat panel (see below). You'll get a desktop notification and audible beep.</li>
+                    <li><strong>Review & Download</strong> — When finished, download the output, preview it in the browser, or export a debug bundle for troubleshooting.</li>
                 </ol>
 
                 <h3 style="color:#1e293b;margin-top:16px;">Settings</h3>
                 <ul>
-                    <li><strong>Starting URL</strong> — Where the lab begins (e.g., <code>https://labs.demo.okta.com/lab/your-lab-id</code>)</li>
-                    <li><strong>AI Model</strong> — Claude Sonnet 4.6 recommended for speed + accuracy</li>
-                    <li><strong>Okta API Key</strong> (optional) — An SSWS token for the target Okta org. Enables API operations like MFA factor enrollment that can't be done through the browser UI alone. Required for labs involving MFA setup.</li>
-                    <li><strong>Use system Chrome</strong> — Check this if corporate endpoint security blocks Playwright's Chromium</li>
+                    <li><strong>Starting URL</strong> — The URL where the lab begins (e.g., <code>https://labs.demo.okta.com/lab/your-lab-id</code>).</li>
+                    <li><strong>AI Model</strong> — Claude Sonnet 4.6 is recommended for the best balance of speed and accuracy.</li>
+                    <li><strong>Okta API Key</strong> (optional but recommended) — An API token (SSWS format) for the target Okta org. This enables the bot to perform operations like enrolling MFA factors for users via API, which is required for labs involving MFA enrollment steps that would normally need a mobile device. Generate one in the Okta Admin Console under Security &gt; API &gt; Tokens.</li>
+                    <li><strong>Use system Chrome</strong> — Check this if your organization's endpoint security blocks Playwright's bundled Chromium browser.</li>
                 </ul>
 
                 <h3 style="color:#1e293b;margin-top:16px;">Bot Chat Panel</h3>
-                <p>During recording, a chat panel appears where the bot can ask you questions and you can provide guidance. Common scenarios:</p>
+                <p>During recording, a chat panel appears below the progress log. This is where the bot communicates with you when it needs help. You can also type messages to provide guidance. Common scenarios:</p>
                 <ul>
-                    <li><strong>MFA approval</strong> — The bot saved a security policy and needs you to approve the push notification on your phone</li>
-                    <li><strong>Navigation help</strong> — The bot is unsure which element to click</li>
-                    <li><strong>Clarification</strong> — The bot needs more context about what the guide means</li>
+                    <li><strong>MFA push approval</strong> — The bot saved a security policy change and Okta is waiting for you to approve the push notification on your phone. Approve it, then type "done" or click Send.</li>
+                    <li><strong>Navigation help</strong> — The bot tried multiple approaches and is stuck. Describe what you see or suggest what to click.</li>
+                    <li><strong>Clarification</strong> — The bot needs more context about what the guide means or what the expected outcome looks like.</li>
                 </ul>
-                <p>You'll get a desktop notification and an audible beep when the bot needs help. Allow browser notifications when prompted.</p>
+                <p>When the bot needs help: the tab title will flash, you'll hear a beep, and a desktop notification will appear. <strong>Allow browser notifications when prompted</strong> so you don't miss these alerts.</p>
+
+                <h3 style="color:#1e293b;margin-top:16px;">After the Run</h3>
+                <ul>
+                    <li><strong>Download Output</strong> — Saves the completed markdown with embedded screenshots</li>
+                    <li><strong>Preview in Browser</strong> — Opens the output as a styled HTML page with rendered screenshots at <a href="/preview" target="_blank">/preview</a></li>
+                    <li><strong>Export Debug Bundle</strong> — Downloads a zip containing the input guide, output, and full console log. Attach this to <a href="https://github.com/joevanhorn/lab-screenshot/issues" target="_blank">GitHub Issues</a> if you need to report a problem.</li>
+                </ul>
 
                 <h3 style="color:#1e293b;margin-top:16px;">Tips</h3>
                 <ul>
-                    <li>Keep your phone nearby for MFA push approvals</li>
-                    <li>Don't interact with the bot's browser window while it's running</li>
-                    <li>For best results, start with a clean Okta org state</li>
-                    <li>After the run, visit <a href="/preview" target="_blank">/preview</a> to see the output rendered with screenshots</li>
+                    <li>Allow browser notifications when first prompted — this is how the bot alerts you when it needs help</li>
+                    <li>Keep your phone nearby for MFA push approvals during security policy changes</li>
+                    <li>Don't interact with the bot's browser window while it's running — let it navigate on its own</li>
+                    <li>For best results, make sure the Okta org is in a clean starting state (e.g., MFA policies not already configured)</li>
+                    <li>If the bot gets stuck, check the chat panel — it may be waiting for your input</li>
+                </ul>
+
+                <h3 style="color:#1e293b;margin-top:16px;">Troubleshooting</h3>
+                <ul>
+                    <li><strong>Bot can't find an element</strong> — It will try multiple selectors automatically. If stuck, it asks for help via the chat panel.</li>
+                    <li><strong>Screenshots look wrong</strong> — Make sure the browser window isn't minimized or covered during the run.</li>
+                    <li><strong>API calls failing</strong> — Verify the Okta API key is correct and has Super Admin permissions.</li>
+                    <li><strong>MFA prompt not appearing</strong> — Ensure Okta Verify is installed and push notifications are enabled on your device.</li>
+                    <li><strong>Need to report a bug?</strong> — Click "Export Debug Bundle" and attach the zip to a <a href="https://github.com/joevanhorn/lab-screenshot/issues/new?template=bug_report.md" target="_blank">new issue</a>.</li>
                 </ul>
             </div>
         </details>
