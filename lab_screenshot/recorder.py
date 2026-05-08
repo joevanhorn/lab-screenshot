@@ -596,8 +596,8 @@ Use the browser_api tool with SSWS token (must be provided in app UI):
             # Log any reasoning the LLM wrote, and capture key observations in progress
             if message.content:
                 text = message.content if isinstance(message.content, str) else str(message.content)
-                for line in text.strip().split('\n')[:3]:
-                    self._log(f"  💭 {line[:100]}")
+                for line in text.strip().split('\n')[:5]:
+                    self._log(f"  💭 {line}")
                 # If the bot's reasoning mentions successful completion, record it
                 text_lower = text.lower()
                 if any(kw in text_lower for kw in ['completed successfully', 'simulation completed', 'attack completed', '1/1 successful']):
@@ -624,7 +624,7 @@ Use the browser_api tool with SSWS token (must be provided in app UI):
                         tc_args = json.loads(tc.function.arguments)
                     except json.JSONDecodeError:
                         tc_args = {}
-                    short_result = result[:120]
+                    short_result = result[:200]
                     if fname == "click":
                         progress_log.append(f"Clicked '{tc_args.get('selector', '')[:50]}' → {short_result}")
                     elif fname == "fill":
