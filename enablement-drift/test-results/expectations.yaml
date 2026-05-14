@@ -1,6 +1,6 @@
 doc_title: seeded-drift-guide
 doc_source: /home/ubuntu/lab-screenshot/enablement-drift/guides/seeded-drift-guide.md
-extraction_timestamp: '2026-05-14T20:01:47.159877'
+extraction_timestamp: '2026-05-14T20:44:00.846125'
 expectations:
 - step_id: step-1
   description: Navigate to Access Certifications via Identity Governance in the left
@@ -19,12 +19,9 @@ expectations:
   - text: Access Certifications
     locator_hint: page header
     semantic_role: section_header
-  source_text: 'In the Okta Admin Console, navigate to **Identity Governance** in
-    the left sidebar
-
-    2. Click on **Access Certifications** to open the certification management page
-
-    3. You should see the **Access Certifications** page header'
+  source_text: In the Okta Admin Console, navigate to **Identity Governance** in the
+    left sidebar. Click on **Access Certifications** to open the certification management
+    page. You should see the **Access Certifications** page header
 - step_id: step-2
   description: View active campaigns by clicking the Campaigns tab and locating the
     Create campaign button
@@ -43,13 +40,9 @@ expectations:
   - text: Create campaign
     locator_hint: button at top of page
     semantic_role: button
-  source_text: 'Click on the **Campaigns** tab
-
-    2. You should see a list of **Certification campaigns** with their status
-
-    3. The page should show active, scheduled, and completed campaigns
-
-    4. Look for the **Create campaign** button at the top of the page'
+  source_text: Click on the **Campaigns** tab. You should see a list of **Certification
+    campaigns** with their status. The page should show active, scheduled, and completed
+    campaigns. Look for the **Create campaign** button at the top of the page
 - step_id: step-3
   description: Click an active campaign to review its details including review progress
     and action options
@@ -75,14 +68,10 @@ expectations:
   - text: End campaign
     locator_hint: campaign actions option
     semantic_role: button
-  source_text: 'Click on any active campaign to view its details
-
-    2. You should see the campaign''s **Review progress** summary
-
-    3. The campaign detail page shows the number of **Pending reviews**, **Approved**
-    items, and **Revoked** items
-
-    4. Look for the **End campaign** option in the campaign actions'
+  source_text: Click on any active campaign to view its details. You should see the
+    campaign's **Review progress** summary. The campaign detail page shows the number
+    of **Pending reviews**, **Approved** items, and **Revoked** items. Look for the
+    **End campaign** option in the campaign actions
 - step_id: step-4
   description: Click the Preconfigured campaigns tab to view certification templates
   navigation:
@@ -94,11 +83,9 @@ expectations:
   - text: Preconfigured campaigns
     locator_hint: tab
     semantic_role: tab
-  source_text: 'Click on the **Preconfigured campaigns** tab
-
-    2. You should see templates for common certification scenarios
-
-    3. The page lists preconfigured campaign types with descriptions'
+  source_text: Click on the **Preconfigured campaigns** tab. You should see templates
+    for common certification scenarios. The page lists preconfigured campaign types
+    with descriptions
 - step_id: step-5
   description: Click the Security access reviews tab to view privileged access review
     options
@@ -111,8 +98,6 @@ expectations:
   - text: Security access reviews
     locator_hint: tab
     semantic_role: tab
-  source_text: 'Click on the **Security access reviews** tab
-
-    2. You should see options for security-focused access reviews
-
-    3. This section helps identify and review privileged access across the organization'
+  source_text: Click on the **Security access reviews** tab. You should see options
+    for security-focused access reviews. This section helps identify and review privileged
+    access across the organization

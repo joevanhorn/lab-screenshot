@@ -1,0 +1,31 @@
+{"t": 0.0, "level": "agent", "message": "Authenticating to Okta admin console..."}
+{"t": 28.2, "level": "agent", "message": "\u2705 Authenticated to https://taskvantage-admin.okta.com"}
+{"t": 28.2, "level": "agent", "message": "\ud83d\udcd6 Step step-1: Navigate to Access Certifications via Identity Governance in the left sidebar"}
+{"t": 28.2, "level": "agent", "message": "\ud83e\udded Navigating: Identity Governance > Access Certifications"}
+{"t": 40.2, "level": "agent", "message": "\ud83d\udcf8 Captured 63 UI elements at https://taskvantage-admin.okta.com/admin/dashboard"}
+{"t": 40.2, "level": "error", "message": "  \u274c Missing: \"Identity Governance\""}
+{"t": 40.2, "level": "error", "message": "  \u274c Missing: \"Access Certifications\""}
+{"t": 40.2, "level": "error", "message": "  \u274c Missing: \"Access Certifications\""}
+{"t": 40.2, "level": "agent", "message": "\ud83d\udcd6 Step step-2: View active campaigns by clicking the Campaigns tab and locating the Create campaign button"}
+{"t": 40.2, "level": "agent", "message": "\ud83e\udded Navigating: Identity Governance > Access Certifications > Campaigns"}
+{"t": 54.9, "level": "agent", "message": "\ud83d\udcf8 Captured 55 UI elements at https://taskvantage-admin.okta.com/admin/governance/campaigns/active"}
+{"t": 54.9, "level": "error", "message": "  \u274c Missing: \"Campaigns\""}
+{"t": 54.9, "level": "info", "message": "  \u2705 Found: \"Certification campaigns\""}
+{"t": 54.9, "level": "info", "message": "  \u2705 Found: \"Create campaign\""}
+{"t": 54.9, "level": "agent", "message": "\ud83d\udcd6 Step step-3: Click an active campaign to review its details including review progress and action options"}
+{"t": 54.9, "level": "agent", "message": "\ud83e\udded Navigating: Identity Governance > Access Certifications > Campaigns > <active campaign>"}
+{"t": 100.7, "level": "agent", "message": "\ud83d\udcf8 Captured 2 UI elements at https://taskvantage-admin.okta.com/admin/identity-governance/%3Cactive-campaign%3E"}
+{"t": 100.7, "level": "error", "message": "  \u274c Missing: \"Review progress\""}
+{"t": 100.7, "level": "error", "message": "  \u274c Missing: \"Pending reviews\""}
+{"t": 100.7, "level": "error", "message": "  \u274c Missing: \"Approved\""}
+{"t": 100.7, "level": "error", "message": "  \u274c Missing: \"Revoked\""}
+{"t": 100.7, "level": "error", "message": "  \u274c Missing: \"End campaign\""}
+{"t": 100.7, "level": "agent", "message": "\ud83d\udcd6 Step step-4: Click the Preconfigured campaigns tab to view certification templates"}
+{"t": 100.7, "level": "agent", "message": "\ud83e\udded Navigating: Identity Governance > Access Certifications > Preconfigured campaigns"}
+{"t": 116.8, "level": "agent", "message": "\ud83d\udcf8 Captured 2 UI elements at https://taskvantage-admin.okta.com/admin/identity-governance/preconfigured-campaigns"}
+{"t": 116.8, "level": "error", "message": "  \u274c Missing: \"Preconfigured campaigns\""}
+{"t": 116.8, "level": "agent", "message": "\ud83d\udcd6 Step step-5: Click the Security access reviews tab to view privileged access review options"}
+{"t": 116.8, "level": "agent", "message": "\ud83e\udded Navigating: Identity Governance > Access Certifications > Security access reviews"}
+{"t": 132.8, "level": "agent", "message": "\ud83d\udcf8 Captured 2 UI elements at https://taskvantage-admin.okta.com/admin/identity-governance/security-access-reviews"}
+{"t": 132.8, "level": "error", "message": "  \u274c Missing: \"Security access reviews\""}
+{"t": 133.2, "level": "agent", "message": "\ud83c\udfac Video saved: /home/ubuntu/lab-screenshot/runs/test-204400/video/de90723bd7ceb29e69da0d7d2422cde1.webm"}

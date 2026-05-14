@@ -94,6 +94,16 @@ async def capture(
         started_at=datetime.utcnow(),
     )
 
+    # Synced log for the recording viewer
+    log_entries: list[dict] = []
+    video_start_time = time.time()
+
+    def log(message: str, level: str = "info"):
+        """Add a timestamped log entry synced to video."""
+        t = time.time() - video_start_time
+        log_entries.append({"t": round(t, 1), "level": level, "message": message})
+        print(f"  [{level:5s}] {message}")
+
     async with async_playwright() as p:
         browser = await p.chromium.launch(
             headless=headless,
@@ -109,21 +119,40 @@ async def capture(
             record_video_size={"width": 1440, "height": 1080},
         )
         page = await context.new_page()
+        video_start_time = time.time()
 
         # Authenticate
         try:
+            log("Authenticating to Okta admin console...", "agent")
             await _authenticate(page, org_url, username, password, totp_secret)
-            print(f"  ✅ Authenticated to {org_url}")
+            log(f"✅ Authenticated to {org_url}", "agent")
         except Exception as e:
-            print(f"  ❌ Authentication failed: {e}")
+            log(f"❌ Authentication failed: {e}", "error")
             doc_capture.completed_at = datetime.utcnow()
             return doc_capture
 
         # Capture each step
         for exp in expectations.expectations:
-            print(f"  📸 Step {exp.step_id}: {exp.description[:60]}...")
-            state = await _capture_step(page, exp, org_url, screenshots_dir)
+            log(f"📖 Step {exp.step_id}: {exp.description}", "agent")
+            if exp.navigation:
+                log(f"🧭 Navigating: {' > '.join(exp.navigation)}", "agent")
+
+            state = await _capture_step(page, exp, org_url, screenshots_dir, log)
             doc_capture.captures.append(state)
+
+            if state.error:
+                log(f"❌ Capture failed: {state.error}", "error")
+            else:
+                label_count = len(state.accessible_labels)
+                log(f"📸 Captured {label_count} UI elements at {state.url}", "agent")
+
+                # Log which expected labels were found/missing
+                found_texts = {l.text.lower() for l in state.accessible_labels}
+                for label in exp.labels:
+                    if label.text.lower() in found_texts:
+                        log(f"  ✅ Found: \"{label.text}\"", "info")
+                    else:
+                        log(f"  ❌ Missing: \"{label.text}\"", "error")
 
         doc_capture.completed_at = datetime.utcnow()
 
@@ -133,7 +162,10 @@ async def capture(
         await browser.close()
 
         if video_path:
-            print(f"  🎬 Video saved: {video_path}")
+            log(f"🎬 Video saved: {video_path}", "agent")
+
+        # Generate the synced recording viewer
+        _generate_viewer(run_dir, video_dir, log_entries)
 
     return doc_capture
 
@@ -208,7 +240,30 @@ async def _authenticate(page, org_url: str, username: str, password: str, totp_s
     await asyncio.sleep(3)
 
 
-async def _capture_step(page, expectation, org_url: str, screenshots_dir: Path) -> CapturedState:
+def _generate_viewer(run_dir: Path, video_dir: Path, log_entries: list[dict]):
+    """Generate the self-contained HTML viewer with synced video + log."""
+    import json as json_mod
+
+    webms = sorted(video_dir.glob("*.webm"), key=lambda p: p.stat().st_size, reverse=True)
+    primary = webms[0].name if webms else ""
+
+    log_json = json_mod.dumps(log_entries, ensure_ascii=False)
+
+    viewer_html = _VIDEO_VIEWER_HTML.replace("__PRIMARY_VIDEO__", f"video/{primary}").replace("__LOG_JSON__", log_json)
+
+    viewer_path = run_dir / "recording-viewer.html"
+    viewer_path.write_text(viewer_html, encoding="utf-8")
+
+    # Also write the JSONL
+    jsonl_path = run_dir / "recording-log.jsonl"
+    with jsonl_path.open("w") as f:
+        for e in log_entries:
+            f.write(json_mod.dumps(e) + "\n")
+
+    print(f"  📺 Viewer: {viewer_path}")
+
+
+async def _capture_step(page, expectation, org_url: str, screenshots_dir: Path, log=None) -> CapturedState:
     """Navigate to a step and capture DOM state + screenshot."""
     try:
         # Dismiss any popups before navigation
@@ -420,7 +475,7 @@ async def _execute_step_actions(page, expectation):
                     if await el.count() > 0:
                         await el.click(force=True, timeout=3000)
                         await asyncio.sleep(1.5)
-                        print(f"    ✓ Clicked: {target}")
+                        print(f"    ✓ Clicked: \"{target}\"")
                         clicked = True
                         break
                 except Exception:
@@ -523,3 +578,94 @@ async def _navigate_breadcrumbs(page, breadcrumbs: list[str], org_url: str):
                     continue
             if not navigated:
                 print(f"    ⚠️  Could not navigate to: {crumb}")
+
+
+_VIDEO_VIEWER_HTML = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Drift Detection — Session Recording</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #0f172a; color: #e2e8f0; display: flex; flex-direction: column; }
+  header { padding: 10px 16px; background: #1e293b; border-bottom: 1px solid #334155; display: flex; align-items: center; gap: 12px; }
+  header h1 { font-size: 14px; font-weight: 600; }
+  header .meta { font-size: 12px; color: #94a3b8; }
+  main { flex: 1; display: flex; min-height: 0; }
+  .video-pane { flex: 1; display: flex; align-items: center; justify-content: center; background: #000; padding: 12px; min-width: 0; }
+  video { max-width: 100%; max-height: 100%; background: #000; }
+  .log-pane { width: 480px; min-width: 360px; max-width: 50vw; resize: horizontal; overflow: auto; background: #1e293b; border-left: 1px solid #334155; }
+  .log-entry { padding: 6px 12px; border-bottom: 1px solid #334155; cursor: pointer; font-size: 12px; line-height: 1.5; transition: background 80ms; }
+  .log-entry:hover { background: #334155; }
+  .log-entry.active { background: #2563eb; color: #fff; }
+  .log-entry.active .t { color: #bfdbfe; }
+  .log-entry .t { display: inline-block; width: 56px; color: #64748b; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
+  .log-entry .lvl { display: inline-block; width: 56px; color: #94a3b8; font-size: 10px; text-transform: uppercase; }
+  .log-entry .lvl.error { color: #f87171; }
+  .log-entry .lvl.agent { color: #34d399; }
+  .log-entry .msg { color: inherit; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🔎 Drift Detection — Session Recording</h1>
+  <span class="meta">Click any log row to jump the video to that moment</span>
+</header>
+<main>
+  <div class="video-pane">
+    <video id="player" controls></video>
+  </div>
+  <div class="log-pane" id="log-pane"></div>
+</main>
+<script>
+const VIDEO_SRC = "__PRIMARY_VIDEO__";
+const LOG = __LOG_JSON__;
+
+const player = document.getElementById('player');
+const pane = document.getElementById('log-pane');
+
+player.src = VIDEO_SRC;
+
+function fmtTime(s) {
+  if (s == null) return '--:--';
+  const m = Math.floor(s / 60);
+  const ss = Math.floor(s % 60);
+  return String(m).padStart(2, '0') + ':' + String(ss).padStart(2, '0');
+}
+
+LOG.forEach((e, i) => {
+  const row = document.createElement('div');
+  row.className = 'log-entry';
+  row.dataset.idx = i;
+  row.dataset.t = e.t;
+  row.innerHTML = '<span class="t">' + fmtTime(e.t) + '</span>'
+    + '<span class="lvl ' + (e.level || 'info') + '">' + (e.level || 'info') + '</span>'
+    + '<span class="msg"></span>';
+  row.querySelector('.msg').textContent = e.message;
+  row.addEventListener('click', () => {
+    if (player.src) { player.currentTime = e.t; player.play(); }
+  });
+  pane.appendChild(row);
+});
+
+player.addEventListener('timeupdate', () => {
+  const t = player.currentTime;
+  const rows = pane.querySelectorAll('.log-entry');
+  let active = -1;
+  for (let i = 0; i < rows.length; i++) {
+    if (parseFloat(rows[i].dataset.t) <= t) active = i; else break;
+  }
+  rows.forEach((r, i) => r.classList.toggle('active', i === active));
+  if (active >= 0) {
+    const row = rows[active];
+    const r = row.getBoundingClientRect();
+    const p = pane.getBoundingClientRect();
+    if (r.top < p.top || r.bottom > p.bottom) {
+      row.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    }
+  }
+});
+</script>
+</body>
+</html>"""
