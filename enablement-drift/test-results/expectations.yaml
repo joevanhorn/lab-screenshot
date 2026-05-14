@@ -1,6 +1,6 @@
 doc_title: seeded-drift-guide
 doc_source: /home/ubuntu/lab-screenshot/enablement-drift/guides/seeded-drift-guide.md
-extraction_timestamp: '2026-05-14T18:32:55.718366'
+extraction_timestamp: '2026-05-14T18:47:00.488808'
 expectations:
 - step_id: step-1
   description: Navigate to the Governance Engine dashboard
@@ -45,7 +45,6 @@ expectations:
   navigation:
   - Identity Governance
   - Access Certifications
-  - Campaigns
   url_hint: ''
   labels:
   - text: Create campaign
@@ -69,11 +68,10 @@ expectations:
 
     2. Click on the **Bundles** tab'
 - step_id: step-3b
-  description: Review the Entitlement Bundles page with existing bundles
+  description: Verify the Entitlement Bundles page is visible with bundle details
   navigation:
   - Identity Governance
   - Entitlement Management
-  - Bundles
   url_hint: ''
   labels:
   - text: Entitlement Bundles
@@ -84,7 +82,7 @@ expectations:
 
     4. Each bundle shows its name, status, and the number of assigned principals'
 - step_id: step-4a
-  description: Navigate to Governance Labels and review existing labels
+  description: Navigate to Governance Labels and verify label names are visible
   navigation:
   - Identity Governance
   - Governance Labels

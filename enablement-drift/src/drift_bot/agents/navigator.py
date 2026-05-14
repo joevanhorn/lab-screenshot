@@ -99,8 +99,14 @@ async def capture(
             headless=headless,
             args=["--disable-blink-features=AutomationControlled"],
         )
+        # Video recording dir
+        video_dir = run_dir / "video"
+        video_dir.mkdir(parents=True, exist_ok=True)
+
         context = await browser.new_context(
             viewport={"width": 1440, "height": 1080},
+            record_video_dir=str(video_dir),
+            record_video_size={"width": 1440, "height": 1080},
         )
         page = await context.new_page()
 
@@ -120,7 +126,14 @@ async def capture(
             doc_capture.captures.append(state)
 
         doc_capture.completed_at = datetime.utcnow()
+
+        # Close context first to flush video, then browser
+        video_path = await page.video.path() if page.video else None
+        await context.close()
         await browser.close()
+
+        if video_path:
+            print(f"  🎬 Video saved: {video_path}")
 
     return doc_capture
 
