@@ -126,45 +126,70 @@ async def capture(
 
 
 async def _authenticate(page, org_url: str, username: str, password: str, totp_secret: str = ""):
-    """Authenticate to Okta admin console using session token flow."""
-    import urllib.request
-    import json as json_mod
+    """Authenticate to Okta admin console via browser-based OIE login."""
 
-    # Get session token via authn API
-    base_url = org_url.replace("-admin.", ".").rstrip("/")
-    authn_data = json_mod.dumps({"username": username, "password": password}).encode()
-    req = urllib.request.Request(
-        f"{base_url}/api/v1/authn",
-        data=authn_data,
-        headers={"Content-Type": "application/json"},
-    )
-    resp = urllib.request.urlopen(req)
-    result = json_mod.loads(resp.read())
+    # Navigate directly to the admin console — this triggers the OIDC login flow
+    await page.goto(org_url, wait_until="networkidle", timeout=30000)
+    await asyncio.sleep(3)
 
-    if result.get("status") == "MFA_REQUIRED" and totp_secret:
-        # Handle TOTP MFA
+    # Debug: screenshot the login page
+    await page.screenshot(path="/tmp/drift-auth-step1.png")
+    print(f"    Auth page URL: {page.url}")
+
+    # Step 1: Enter username (try multiple selectors)
+    username_field = page.locator('input[name="identifier"], input[name="username"], input[type="text"]:visible')
+    if await username_field.count() > 0:
+        await username_field.fill(username)
+        await page.locator('input[type="submit"]').first.click()
+        await asyncio.sleep(3)
+
+    # Step 2: Select Password authenticator (OIE shows method selection)
+    for sel in ['div[data-se="okta_password"]', 'a:has-text("Select")']:
+        el = page.locator(sel)
+        if sel == 'a:has-text("Select")':
+            # Password is usually the last "Select" link
+            if await el.count() > 1:
+                await el.last.click()
+                await asyncio.sleep(2)
+                break
+        elif await el.count() > 0:
+            await el.first.click()
+            await asyncio.sleep(2)
+            break
+
+    # Step 3: Enter password
+    pwd_field = page.locator('input[type="password"]')
+    if await pwd_field.count() > 0:
+        await pwd_field.fill(password)
+        await page.locator('input[type="submit"]').first.click()
+        await asyncio.sleep(3)
+
+    # Step 4: Handle TOTP MFA
+    if totp_secret:
         import pyotp
-        state_token = result["stateToken"]
-        factors = result.get("_embedded", {}).get("factors", [])
-        totp_factor = next((f for f in factors if f.get("factorType") == "token:software:totp"), None)
-        if totp_factor:
-            factor_id = totp_factor["id"]
+        totp_input = page.locator('input[type="text"]:visible')
+        if await totp_input.count() > 0:
             code = pyotp.TOTP(totp_secret).now()
-            verify_data = json_mod.dumps({"stateToken": state_token, "passCode": code}).encode()
-            verify_req = urllib.request.Request(
-                f"{base_url}/api/v1/authn/factors/{factor_id}/verify",
-                data=verify_data,
-                headers={"Content-Type": "application/json"},
-            )
-            result = json_mod.loads(urllib.request.urlopen(verify_req).read())
+            await totp_input.first.fill(code)
+            await page.locator('input[type="submit"]').first.click()
+            await asyncio.sleep(5)
 
-    session_token = result.get("sessionToken")
-    if not session_token:
-        raise RuntimeError(f"Auth failed: status={result.get('status')}")
+    # Step 5: Handle "Keep me signed in" prompt
+    await asyncio.sleep(2)
+    stay_signed_in = page.locator('input[value="Stay signed in"], button:has-text("Stay signed in"), a:has-text("Stay signed in")')
+    if await stay_signed_in.count() > 0:
+        await stay_signed_in.first.click()
+        await asyncio.sleep(3)
 
-    # Navigate with session token
-    await page.goto(f"{base_url}/login/sessionCookieRedirect?token={session_token}&redirectUrl={org_url}")
-    await page.wait_for_load_state("networkidle", timeout=15000)
+    # Also handle "Don't stay signed in" as a fallback
+    dont_stay = page.locator('input[value="Don\'t stay signed in"], button:has-text("Don\'t stay signed in"), a:has-text("Don\'t stay signed in")')
+    if await dont_stay.count() > 0:
+        await dont_stay.first.click()
+        await asyncio.sleep(3)
+
+    # Wait for admin console to load
+    await page.wait_for_load_state("networkidle", timeout=30000)
+    await asyncio.sleep(3)
 
 
 async def _capture_step(page, expectation, org_url: str, screenshots_dir: Path) -> CapturedState:

@@ -1,0 +1,143 @@
+doc_title: seeded-drift-guide
+doc_source: /home/ubuntu/lab-screenshot/enablement-drift/guides/seeded-drift-guide.md
+extraction_timestamp: '2026-05-14T17:36:52.513943'
+expectations:
+- step_id: step-1
+  description: Navigate to the Governance Engine dashboard
+  navigation:
+  - Identity Governance
+  - Governance Engine
+  url_hint: https://taskvantage-admin.okta.com
+  labels:
+  - text: Identity Governance
+    locator_hint: left sidebar navigation item
+    semantic_role: other
+  - text: Governance Engine
+    locator_hint: navigation tab
+    semantic_role: tab
+  source_text: 'In the Okta Admin Console, navigate to **Identity Governance** in
+    the left sidebar
+
+    2. Click on **Governance Engine** in the navigation tabs
+
+    3. You should see the Governance Engine dashboard with an overview of your governance
+    configuration'
+- step_id: step-2a
+  description: Navigate to Access Certifications and click the Campaigns tab
+  navigation:
+  - Identity Governance
+  - Access Certifications
+  url_hint: ''
+  labels:
+  - text: Access Certifications
+    locator_hint: left sidebar navigation item
+    semantic_role: other
+  - text: Campaigns
+    locator_hint: tab
+    semantic_role: tab
+  source_text: 'Navigate to **Identity Governance > Access Certifications**
+
+    2. Click on the **Campaigns** tab
+
+    3. You should see a list of active and scheduled campaigns'
+- step_id: step-2b
+  description: Click Create campaign to open the campaign creation wizard
+  navigation:
+  - Identity Governance
+  - Access Certifications
+  - Campaigns
+  url_hint: ''
+  labels:
+  - text: Create campaign
+    locator_hint: button
+    semantic_role: button
+  source_text: Click **Create campaign** to see the campaign creation wizard
+- step_id: step-3a
+  description: Navigate to Entitlement Management and click the Bundles tab
+  navigation:
+  - Identity Governance
+  - Entitlement Management
+  url_hint: ''
+  labels:
+  - text: Entitlement Management
+    locator_hint: left sidebar navigation item
+    semantic_role: other
+  - text: Bundles
+    locator_hint: tab
+    semantic_role: tab
+  source_text: 'Navigate to **Identity Governance > Entitlement Management**
+
+    2. Click on the **Bundles** tab'
+- step_id: step-3b
+  description: Review the Entitlement Bundles page with existing bundles listed
+  navigation:
+  - Identity Governance
+  - Entitlement Management
+  - Bundles
+  url_hint: ''
+  labels:
+  - text: Entitlement Bundles
+    locator_hint: page header
+    semantic_role: section_header
+  source_text: 'You should see the **Entitlement Bundles** page with existing bundles
+    listed
+
+    4. Each bundle shows its name, status, and the number of assigned principals'
+- step_id: step-4a
+  description: Navigate to Governance Labels and review existing labels
+  navigation:
+  - Identity Governance
+  - Governance Labels
+  url_hint: ''
+  labels:
+  - text: Governance Labels
+    locator_hint: left sidebar navigation item
+    semantic_role: other
+  - text: SOX
+    locator_hint: label item
+    semantic_role: other
+  - text: Crown Jewel
+    locator_hint: label item
+    semantic_role: other
+  - text: Privileged
+    locator_hint: label item
+    semantic_role: other
+  source_text: 'Navigate to **Identity Governance > Governance Labels**
+
+    2. You should see labels such as **SOX**, **Crown Jewel**, and **Privileged**'
+- step_id: step-4b
+  description: Verify the Create label button is visible on the Governance Labels
+    page
+  navigation:
+  - Identity Governance
+  - Governance Labels
+  url_hint: ''
+  labels:
+  - text: Create label
+    locator_hint: button
+    semantic_role: button
+  source_text: The labels page should show a **Create label** button
+- step_id: step-5
+  description: Navigate to Access Requests and review the Request Conditions tab
+  navigation:
+  - Identity Governance
+  - Access Requests
+  - Request Conditions
+  url_hint: ''
+  labels:
+  - text: Access Requests
+    locator_hint: left sidebar navigation item
+    semantic_role: other
+  - text: Request Conditions
+    locator_hint: tab
+    semantic_role: tab
+  - text: Approval Sequences
+    locator_hint: section header or column header
+    semantic_role: section_header
+  source_text: 'Navigate to **Identity Governance > Access Requests**
+
+    2. Click on the **Request Conditions** tab
+
+    3. You should see configured request conditions for self-service access
+
+    4. The page should display **Approval Sequences** for each request condition'
