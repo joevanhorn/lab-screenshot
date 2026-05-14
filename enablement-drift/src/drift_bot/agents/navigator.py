@@ -249,7 +249,12 @@ def _generate_viewer(run_dir: Path, video_dir: Path, log_entries: list[dict]):
 
     log_json = json_mod.dumps(log_entries, ensure_ascii=False)
 
-    viewer_html = _VIDEO_VIEWER_HTML.replace("__PRIMARY_VIDEO__", f"video/{primary}").replace("__LOG_JSON__", log_json)
+    viewer_html = _VIDEO_VIEWER_HTML.replace("__PRIMARY_VIDEO__", primary).replace("__LOG_JSON__", log_json)
+
+    # Copy the primary video alongside the viewer for easy sharing
+    if primary:
+        import shutil
+        shutil.copy2(video_dir / primary, run_dir / primary)
 
     viewer_path = run_dir / "recording-viewer.html"
     viewer_path.write_text(viewer_html, encoding="utf-8")
