@@ -2,16 +2,16 @@
 
 **Document**: /home/ubuntu/lab-screenshot/enablement-drift/guides/seeded-drift-guide.md
 **Org**: https://taskvantage-admin.okta.com
-**Run**: test-184700
-**Time**: 2026-05-14T18:48:44.510274
+**Run**: test-185820
+**Time**: 2026-05-14T19:00:15.823538
 
 ## Summary
 
 - **Steps checked**: 8
 - **Labels checked**: 16
-- **Drift found**: 15
+- **Drift found**: 16
 - **Auto-mergeable**: 2
-- **Needs review**: 13
+- **Needs review**: 14
 
 ## Findings
 
@@ -53,7 +53,16 @@
 - **Auto-merge eligible**: Yes
 - **Reasoning**: Fuzzy match (94% similarity): "Campaigns" ≈ "Campaign"
 
-### 🔴 Finding 5: missing_element (step step-3a)
+### 🔴 Finding 5: missing_element (step step-2b)
+
+- **Severity**: high
+- **Confidence**: 85%
+- **Expected**: Create campaign
+- **Observed**: (not found)
+- **Auto-merge eligible**: No
+- **Reasoning**: Expected label "Create campaign" not found in any captured UI element or page text
+
+### 🔴 Finding 6: missing_element (step step-3a)
 
 - **Severity**: high
 - **Confidence**: 85%
@@ -62,7 +71,7 @@
 - **Auto-merge eligible**: No
 - **Reasoning**: Expected label "Entitlement Management" not found in any captured UI element or page text
 
-### 🔴 Finding 6: missing_element (step step-3a)
+### 🔴 Finding 7: missing_element (step step-3a)
 
 - **Severity**: high
 - **Confidence**: 85%
@@ -71,7 +80,7 @@
 - **Auto-merge eligible**: No
 - **Reasoning**: Expected label "Bundles" not found in any captured UI element or page text
 
-### 🔴 Finding 7: missing_element (step step-3b)
+### 🔴 Finding 8: missing_element (step step-3b)
 
 - **Severity**: high
 - **Confidence**: 85%
@@ -80,7 +89,7 @@
 - **Auto-merge eligible**: No
 - **Reasoning**: Expected label "Entitlement Bundles" not found in any captured UI element or page text
 
-### 🔴 Finding 8: missing_element (step step-4a)
+### 🔴 Finding 9: missing_element (step step-4a)
 
 - **Severity**: high
 - **Confidence**: 85%
@@ -89,7 +98,7 @@
 - **Auto-merge eligible**: No
 - **Reasoning**: Expected label "Governance Labels" not found in any captured UI element or page text
 
-### 🔴 Finding 9: missing_element (step step-4a)
+### 🔴 Finding 10: missing_element (step step-4a)
 
 - **Severity**: high
 - **Confidence**: 85%
@@ -98,7 +107,7 @@
 - **Auto-merge eligible**: No
 - **Reasoning**: Expected label "SOX" not found in any captured UI element or page text
 
-### 🔴 Finding 10: missing_element (step step-4a)
+### 🔴 Finding 11: missing_element (step step-4a)
 
 - **Severity**: high
 - **Confidence**: 85%
@@ -107,7 +116,7 @@
 - **Auto-merge eligible**: No
 - **Reasoning**: Expected label "Crown Jewel" not found in any captured UI element or page text
 
-### 🔴 Finding 11: missing_element (step step-4a)
+### 🔴 Finding 12: missing_element (step step-4a)
 
 - **Severity**: high
 - **Confidence**: 85%
@@ -116,7 +125,7 @@
 - **Auto-merge eligible**: No
 - **Reasoning**: Expected label "Privileged" not found in any captured UI element or page text
 
-### 🔴 Finding 12: missing_element (step step-4b)
+### 🔴 Finding 13: missing_element (step step-4b)
 
 - **Severity**: high
 - **Confidence**: 85%
@@ -125,7 +134,7 @@
 - **Auto-merge eligible**: No
 - **Reasoning**: Expected label "Create label" not found in any captured UI element or page text
 
-### 🔴 Finding 13: missing_element (step step-5)
+### 🔴 Finding 14: missing_element (step step-5)
 
 - **Severity**: high
 - **Confidence**: 85%
@@ -134,7 +143,7 @@
 - **Auto-merge eligible**: No
 - **Reasoning**: Expected label "Access Requests" not found in any captured UI element or page text
 
-### 🔴 Finding 14: missing_element (step step-5)
+### 🔴 Finding 15: missing_element (step step-5)
 
 - **Severity**: high
 - **Confidence**: 85%
@@ -143,7 +152,7 @@
 - **Auto-merge eligible**: No
 - **Reasoning**: Expected label "Request Conditions" not found in any captured UI element or page text
 
-### 🔴 Finding 15: missing_element (step step-5)
+### 🔴 Finding 16: missing_element (step step-5)
 
 - **Severity**: high
 - **Confidence**: 85%

@@ -233,7 +233,10 @@ async def _capture_step(page, expectation, org_url: str, screenshots_dir: Path) 
             await page.wait_for_selector('.loading, .spinner, [class*="loading"]', state='hidden', timeout=5000)
         except Exception:
             pass
-        # Final wait for SPA rendering
+        await asyncio.sleep(1)
+
+        # Execute in-page actions described in the step (click tabs, expand sections, etc.)
+        await _execute_step_actions(page, expectation)
         await asyncio.sleep(2)
 
         # Extract DOM elements from main frame AND any iframes
@@ -370,6 +373,64 @@ ADMIN_URL_MAP = {
     "settings": "/admin/settings/account",
     "api tokens": "/admin/access/api/tokens",
 }
+
+
+async def _execute_step_actions(page, expectation):
+    """
+    Execute in-page actions described in the step — click tabs, buttons, expand sections.
+    Parses the step description and expected labels to find clickable elements.
+    Works across main frame and iframes.
+    """
+    desc = expectation.description.lower()
+    labels_to_click = []
+
+    # Extract action targets from expected labels
+    for label in expectation.labels:
+        role = label.semantic_role
+        text = label.text
+        # Click tabs, buttons, and menu items — these are interactive
+        if role in ("tab", "button", "menu_item", "link"):
+            labels_to_click.append(text)
+
+    # Also parse "click on X" patterns from the description
+    import re
+    click_patterns = re.findall(r'click (?:on |the )?(?:\*\*)?([^*\n.]+?)(?:\*\*)?(?:\s+(?:tab|button|link))?', desc, re.IGNORECASE)
+    for match in click_patterns:
+        clean = match.strip().rstrip(' to')
+        if clean and len(clean) > 2:
+            labels_to_click.append(clean)
+
+    if not labels_to_click:
+        return
+
+    # Try clicking each target in both main frame and iframes
+    for target in labels_to_click:
+        clicked = False
+        all_frames = [page] + [f for f in page.frames if f != page.main_frame and f.url and 'about:blank' not in f.url]
+
+        for frame in all_frames:
+            for sel in [
+                f'[role="tab"]:has-text("{target}")',
+                f'button:has-text("{target}")',
+                f'a:has-text("{target}")',
+                f'text="{target}"',
+            ]:
+                try:
+                    el = frame.locator(sel).first
+                    if await el.count() > 0:
+                        await el.click(force=True, timeout=3000)
+                        await asyncio.sleep(1.5)
+                        print(f"    ✓ Clicked: {target}")
+                        clicked = True
+                        break
+                except Exception:
+                    continue
+            if clicked:
+                break
+
+        if not clicked:
+            # Don't warn for section headers or labels we just want to verify exist
+            pass
 
 
 async def _navigate_breadcrumbs(page, breadcrumbs: list[str], org_url: str):

@@ -1,6 +1,6 @@
 doc_title: seeded-drift-guide
 doc_source: /home/ubuntu/lab-screenshot/enablement-drift/guides/seeded-drift-guide.md
-extraction_timestamp: '2026-05-14T18:47:00.488808'
+extraction_timestamp: '2026-05-14T18:58:20.299483'
 expectations:
 - step_id: step-1
   description: Navigate to the Governance Engine dashboard
@@ -45,6 +45,7 @@ expectations:
   navigation:
   - Identity Governance
   - Access Certifications
+  - Campaigns
   url_hint: ''
   labels:
   - text: Create campaign
@@ -72,6 +73,7 @@ expectations:
   navigation:
   - Identity Governance
   - Entitlement Management
+  - Bundles
   url_hint: ''
   labels:
   - text: Entitlement Bundles
