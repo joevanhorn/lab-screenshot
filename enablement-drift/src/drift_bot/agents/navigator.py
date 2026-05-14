@@ -174,7 +174,10 @@ async def _authenticate(page, org_url: str, username: str, password: str, totp_s
             await page.locator('input[type="submit"]').first.click()
             await asyncio.sleep(5)
 
-    # Step 5: Handle "Keep me signed in" prompt
+    # Step 5: Dismiss any Pendo/overlay popups
+    await _dismiss_popups(page)
+
+    # Step 6: Handle "Keep me signed in" prompt
     await asyncio.sleep(2)
     stay_signed_in = page.locator('input[value="Stay signed in"], button:has-text("Stay signed in"), a:has-text("Stay signed in")')
     if await stay_signed_in.count() > 0:
@@ -195,6 +198,9 @@ async def _authenticate(page, org_url: str, username: str, password: str, totp_s
 async def _capture_step(page, expectation, org_url: str, screenshots_dir: Path) -> CapturedState:
     """Navigate to a step and capture DOM state + screenshot."""
     try:
+        # Dismiss any popups before navigation
+        await _dismiss_popups(page)
+
         # Navigate based on breadcrumbs
         if expectation.url_hint:
             url = expectation.url_hint
@@ -204,11 +210,33 @@ async def _capture_step(page, expectation, org_url: str, screenshots_dir: Path) 
         elif expectation.navigation:
             await _navigate_breadcrumbs(page, expectation.navigation, org_url)
 
-        # Wait for page to settle
+        # Wait for page to settle — SPA pages need extra time to hydrate
+        await asyncio.sleep(3)
+        # Dismiss popups that may have appeared after navigation
+        await _dismiss_popups(page)
         await asyncio.sleep(1)
+        # Wait for any loading spinners to disappear
+        try:
+            await page.wait_for_selector('.loading, .spinner, [class*="loading"]', state='hidden', timeout=5000)
+        except Exception:
+            pass
+        # Final wait for SPA rendering
+        await asyncio.sleep(2)
 
-        # Extract DOM elements
-        elements = await page.evaluate(EXTRACT_ELEMENTS_JS)
+        # Extract DOM elements from main frame AND any iframes
+        elements = await page.evaluate(EXTRACT_ELEMENTS_JS) or []
+
+        # Also extract from iframes (governance pages render inside iframes)
+        for frame in page.frames:
+            if frame == page.main_frame:
+                continue
+            if frame.url and 'about:blank' not in frame.url:
+                try:
+                    frame_elements = await frame.evaluate(EXTRACT_ELEMENTS_JS)
+                    if frame_elements:
+                        elements.extend(frame_elements)
+                except Exception:
+                    pass
         labels = [
             CapturedLabel(
                 text=el.get("text", ""),
@@ -224,12 +252,23 @@ async def _capture_step(page, expectation, org_url: str, screenshots_dir: Path) 
             for el in (elements or [])
         ]
 
-        # Get page text
+        # Get page text from main frame and iframes
+        page_text = ""
         try:
             page_text = await page.inner_text("body")
-            page_text = page_text[:4000]
         except Exception:
-            page_text = ""
+            pass
+        for frame in page.frames:
+            if frame == page.main_frame:
+                continue
+            if frame.url and 'about:blank' not in frame.url:
+                try:
+                    frame_text = await frame.inner_text("body")
+                    if frame_text:
+                        page_text += "\n" + frame_text
+                except Exception:
+                    pass
+        page_text = page_text[:8000]
 
         # Screenshot
         screenshot_path = str(screenshots_dir / f"{expectation.step_id}.png")
@@ -258,28 +297,128 @@ async def _capture_step(page, expectation, org_url: str, screenshots_dir: Path) 
         )
 
 
+async def _dismiss_popups(page):
+    """Dismiss Pendo guides, cookie banners, and other overlay popups."""
+    try:
+        # Pendo guide/tooltip
+        await page.evaluate("""() => {
+            const pendo = document.getElementById('pendo-base');
+            if (pendo) pendo.remove();
+            // Also remove any pendo overlay
+            const overlay = document.querySelector('[id*="pendo"]');
+            if (overlay) overlay.remove();
+        }""")
+    except Exception:
+        pass
+
+    try:
+        # Cookie consent / generic dismiss buttons / Pendo buttons
+        for sel in ['button:has-text("Dismiss")', 'a:has-text("Dismiss")',
+                    'button:has-text("Got it")', 'button:has-text("Close")',
+                    '[aria-label="Close"]', '[aria-label="close"]',
+                    'button:has-text("Not now")', '.pendo-close-guide-x',
+                    'button:has-text("Skip")', 'button:has-text("Maybe later")',
+                    '[data-testid="close-button"]']:
+            try:
+                el = page.locator(sel)
+                if await el.count() > 0:
+                    await el.first.click(force=True, timeout=2000)
+                    await asyncio.sleep(0.3)
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+
+# Known direct URL mappings for Okta admin console pages
+# Adapted from lab-screenshot bot's Okta UI cheat sheet
+ADMIN_URL_MAP = {
+    "dashboard": "/admin/dashboard",
+    "users": "/admin/users",
+    "people": "/admin/users",
+    "groups": "/admin/groups",
+    "applications": "/admin/apps/active",
+    "identity governance": "/admin/identity-governance",
+    "access certifications": "/admin/access-certification",
+    "access certification": "/admin/access-certification",
+    "campaigns": "/admin/access-certification",
+    "entitlement management": "/admin/entitlement-management",
+    "entitlements": "/admin/entitlement-management",
+    "bundles": "/admin/entitlement-management/bundles",
+    "governance labels": "/admin/identity-governance/governance-label",
+    "labels": "/admin/identity-governance/governance-label",
+    "access requests": "/admin/access-requests",
+    "request conditions": "/admin/access-requests",
+    "security": "/admin/access/authentication",
+    "authentication policies": "/admin/access/authentication",
+    "network zones": "/admin/access/networks",
+    "system log": "/report/system_log_2",
+    "reports": "/report/system_log_2",
+    "settings": "/admin/settings/account",
+    "api tokens": "/admin/access/api/tokens",
+}
+
+
 async def _navigate_breadcrumbs(page, breadcrumbs: list[str], org_url: str):
-    """Navigate through the Okta admin console following breadcrumbs."""
-    for crumb in breadcrumbs:
-        # Try clicking sidebar/menu items
+    """
+    Navigate through the Okta admin console following breadcrumbs.
+
+    Strategy (matching the lab-screenshot bot):
+    1. Try direct URL mapping first (most reliable)
+    2. Try clicking sidebar section to expand, then sub-item
+    3. Try tab/link click for in-page navigation
+    """
+    base_url = org_url.rstrip("/")
+
+    for i, crumb in enumerate(breadcrumbs):
+        crumb_lower = crumb.lower().strip()
+
+        # Strategy 1: Dismiss popups and click sidebar/page elements
+        await _dismiss_popups(page)
+
+        # Try text= selector with force click (bypasses Pendo overlays)
         try:
-            link = page.locator(f'a:has-text("{crumb}"), button:has-text("{crumb}"), [data-se]:has-text("{crumb}")').first
-            if await link.count() > 0:
-                await link.click()
-                await page.wait_for_load_state("networkidle", timeout=10000)
-                await asyncio.sleep(0.5)
+            el = page.locator(f'text="{crumb}"').first
+            if await el.count() > 0:
+                await el.click(force=True, timeout=5000)
+                await asyncio.sleep(2)
                 continue
         except Exception:
             pass
 
-        # Try tab navigation
-        try:
-            tab = page.locator(f'[role="tab"]:has-text("{crumb}"), .tab:has-text("{crumb}")').first
-            if await tab.count() > 0:
-                await tab.click()
-                await asyncio.sleep(0.5)
+        # Strategy 2: Try various Playwright selectors with force
+        for sel in [
+            f'a:has-text("{crumb}")',
+            f'button:has-text("{crumb}")',
+            f'[role="tab"]:has-text("{crumb}")',
+            f'[data-se]:has-text("{crumb}")',
+            f'.tab:has-text("{crumb}")',
+        ]:
+            try:
+                el = page.locator(sel).first
+                if await el.count() > 0:
+                    await el.click(force=True, timeout=5000)
+                    await page.wait_for_load_state("networkidle", timeout=8000)
+                    await asyncio.sleep(1)
+                    break
+            except Exception:
                 continue
-        except Exception:
-            pass
-
-        print(f"    ⚠️  Could not find navigation element: {crumb}")
+        else:
+            # Strategy 3: Try URL guess from breadcrumb text
+            slug = crumb_lower.replace(" ", "-")
+            guess_urls = [
+                f"{base_url}/admin/{slug}",
+                f"{base_url}/admin/identity-governance/{slug}",
+            ]
+            navigated = False
+            for guess_url in guess_urls:
+                try:
+                    resp = await page.goto(guess_url, wait_until="networkidle", timeout=8000)
+                    if resp and resp.status < 400:
+                        await asyncio.sleep(1)
+                        navigated = True
+                        break
+                except Exception:
+                    continue
+            if not navigated:
+                print(f"    ⚠️  Could not navigate to: {crumb}")

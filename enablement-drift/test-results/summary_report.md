@@ -2,16 +2,16 @@
 
 **Document**: /home/ubuntu/lab-screenshot/enablement-drift/guides/seeded-drift-guide.md
 **Org**: https://taskvantage-admin.okta.com
-**Run**: test-173652
-**Time**: 2026-05-14T17:42:34.547899
+**Run**: test-183255
+**Time**: 2026-05-14T18:34:40.929764
 
 ## Summary
 
 - **Steps checked**: 8
 - **Labels checked**: 16
 - **Drift found**: 16
-- **Auto-mergeable**: 0
-- **Needs review**: 16
+- **Auto-mergeable**: 2
+- **Needs review**: 14
 
 ## Findings
 
@@ -33,23 +33,25 @@
 - **Auto-merge eligible**: No
 - **Reasoning**: Expected label "Governance Engine" not found in any captured UI element or page text
 
-### 🟢 Finding 3: ambiguous (step step-2a)
+### 🟡 Finding 3: label_rename (step step-2a)
 
-- **Severity**: low
-- **Confidence**: 60%
+- **Severity**: medium
+- **Confidence**: 98%
 - **Expected**: Access Certifications
-- **Observed**: (found in page text but not as a discrete UI element)
-- **Auto-merge eligible**: No
-- **Reasoning**: Text "Access Certifications" found in page body but not matched to a specific UI element
+- **Observed**: Access certification
+- **Suggested fix**: Replace "Access Certifications" with "Access certification"
+- **Auto-merge eligible**: Yes
+- **Reasoning**: Fuzzy match (98% similarity): "Access Certifications" ≈ "Access certification"
 
-### 🔴 Finding 4: missing_element (step step-2a)
+### 🟡 Finding 4: label_rename (step step-2a)
 
-- **Severity**: high
-- **Confidence**: 85%
+- **Severity**: medium
+- **Confidence**: 94%
 - **Expected**: Campaigns
-- **Observed**: (not found)
-- **Auto-merge eligible**: No
-- **Reasoning**: Expected label "Campaigns" not found in any captured UI element or page text
+- **Observed**: Campaign
+- **Suggested fix**: Replace "Campaigns" with "Campaign"
+- **Auto-merge eligible**: Yes
+- **Reasoning**: Fuzzy match (94% similarity): "Campaigns" ≈ "Campaign"
 
 ### 🔴 Finding 5: missing_element (step step-2b)
 

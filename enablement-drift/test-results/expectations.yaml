@@ -1,6 +1,6 @@
 doc_title: seeded-drift-guide
 doc_source: /home/ubuntu/lab-screenshot/enablement-drift/guides/seeded-drift-guide.md
-extraction_timestamp: '2026-05-14T17:36:52.513943'
+extraction_timestamp: '2026-05-14T18:32:55.718366'
 expectations:
 - step_id: step-1
   description: Navigate to the Governance Engine dashboard
@@ -69,7 +69,7 @@ expectations:
 
     2. Click on the **Bundles** tab'
 - step_id: step-3b
-  description: Review the Entitlement Bundles page with existing bundles listed
+  description: Review the Entitlement Bundles page with existing bundles
   navigation:
   - Identity Governance
   - Entitlement Management
@@ -106,7 +106,7 @@ expectations:
 
     2. You should see labels such as **SOX**, **Crown Jewel**, and **Privileged**'
 - step_id: step-4b
-  description: Verify the Create label button is visible on the Governance Labels
+  description: Verify the Create label button is present on the Governance Labels
     page
   navigation:
   - Identity Governance
@@ -118,11 +118,10 @@ expectations:
     semantic_role: button
   source_text: The labels page should show a **Create label** button
 - step_id: step-5
-  description: Navigate to Access Requests and review the Request Conditions tab
+  description: Navigate to Access Requests and review Request Conditions tab
   navigation:
   - Identity Governance
   - Access Requests
-  - Request Conditions
   url_hint: ''
   labels:
   - text: Access Requests
