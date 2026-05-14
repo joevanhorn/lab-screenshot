@@ -1,42 +1,40 @@
-# Lab: Configuring Okta Identity Governance
+# Lab: Reviewing Access Certifications in Okta
 
-This lab walks through configuring key Identity Governance features in the Okta Admin Console.
+This lab walks through the Access Certification review process in the Okta Admin Console.
 
 ## Prerequisites
 
 - Access to the Okta Admin Console at https://taskvantage-admin.okta.com
 - Super Admin role
 
-## Step 1: Navigate to the Governance Engine
+## Step 1: Navigate to Access Certifications
 
 1. In the Okta Admin Console, navigate to **Identity Governance** in the left sidebar
-2. Click on **Governance Engine** in the navigation tabs
-3. You should see the Governance Engine dashboard with an overview of your governance configuration
+2. Click on **Access Certifications** to open the certification management page
+3. You should see the **Access Certifications** page header
 
-## Step 2: Review Access Certification Campaigns
+## Step 2: View Active Campaigns
 
-1. Navigate to **Identity Governance > Access Certifications**
-2. Click on the **Campaigns** tab
-3. You should see a list of active and scheduled campaigns
-4. Click **Create campaign** to see the campaign creation wizard
+1. Click on the **Campaigns** tab
+2. You should see a list of **Certification campaigns** with their status
+3. The page should show active, scheduled, and completed campaigns
+4. Look for the **Create campaign** button at the top of the page
 
-## Step 3: Configure Entitlement Management
+## Step 3: Review Campaign Details
 
-1. Navigate to **Identity Governance > Entitlement Management**
-2. Click on the **Bundles** tab
-3. You should see the **Entitlement Bundles** page with existing bundles listed
-4. Each bundle shows its name, status, and the number of assigned principals
+1. Click on any active campaign to view its details
+2. You should see the campaign's **Review progress** summary
+3. The campaign detail page shows the number of **Pending reviews**, **Approved** items, and **Revoked** items
+4. Look for the **End campaign** option in the campaign actions
 
-## Step 4: Review Governance Labels
+## Step 4: Check Preconfigured Campaigns
 
-1. Navigate to **Identity Governance > Governance Labels**
-2. You should see labels such as **SOX**, **Crown Jewel**, and **Privileged**
-3. Click on any label to see the applications it is assigned to
-4. The labels page should show a **Create label** button
+1. Click on the **Preconfigured campaigns** tab
+2. You should see templates for common certification scenarios
+3. The page lists preconfigured campaign types with descriptions
 
-## Step 5: Check Access Requests Configuration
+## Step 5: Review Security Access Reviews
 
-1. Navigate to **Identity Governance > Access Requests**
-2. Click on the **Request Conditions** tab
-3. You should see configured request conditions for self-service access
-4. The page should display **Approval Sequences** for each request condition
+1. Click on the **Security access reviews** tab
+2. You should see options for security-focused access reviews
+3. This section helps identify and review privileged access across the organization

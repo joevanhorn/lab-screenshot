@@ -1,142 +1,118 @@
 doc_title: seeded-drift-guide
 doc_source: /home/ubuntu/lab-screenshot/enablement-drift/guides/seeded-drift-guide.md
-extraction_timestamp: '2026-05-14T18:58:20.299483'
+extraction_timestamp: '2026-05-14T20:01:47.159877'
 expectations:
 - step_id: step-1
-  description: Navigate to the Governance Engine dashboard
-  navigation:
-  - Identity Governance
-  - Governance Engine
-  url_hint: https://taskvantage-admin.okta.com
-  labels:
-  - text: Identity Governance
-    locator_hint: left sidebar navigation item
-    semantic_role: other
-  - text: Governance Engine
-    locator_hint: navigation tab
-    semantic_role: tab
-  source_text: 'In the Okta Admin Console, navigate to **Identity Governance** in
-    the left sidebar
-
-    2. Click on **Governance Engine** in the navigation tabs
-
-    3. You should see the Governance Engine dashboard with an overview of your governance
-    configuration'
-- step_id: step-2a
-  description: Navigate to Access Certifications and click the Campaigns tab
+  description: Navigate to Access Certifications via Identity Governance in the left
+    sidebar
   navigation:
   - Identity Governance
   - Access Certifications
-  url_hint: ''
+  url_hint: https://taskvantage-admin.okta.com
   labels:
-  - text: Access Certifications
-    locator_hint: left sidebar navigation item
+  - text: Identity Governance
+    locator_hint: left sidebar menu item
     semantic_role: other
-  - text: Campaigns
-    locator_hint: tab
-    semantic_role: tab
-  source_text: 'Navigate to **Identity Governance > Access Certifications**
+  - text: Access Certifications
+    locator_hint: left sidebar menu item or page header
+    semantic_role: other
+  - text: Access Certifications
+    locator_hint: page header
+    semantic_role: section_header
+  source_text: 'In the Okta Admin Console, navigate to **Identity Governance** in
+    the left sidebar
 
-    2. Click on the **Campaigns** tab
+    2. Click on **Access Certifications** to open the certification management page
 
-    3. You should see a list of active and scheduled campaigns'
-- step_id: step-2b
-  description: Click Create campaign to open the campaign creation wizard
+    3. You should see the **Access Certifications** page header'
+- step_id: step-2
+  description: View active campaigns by clicking the Campaigns tab and locating the
+    Create campaign button
   navigation:
   - Identity Governance
   - Access Certifications
   - Campaigns
   url_hint: ''
   labels:
+  - text: Campaigns
+    locator_hint: tab
+    semantic_role: tab
+  - text: Certification campaigns
+    locator_hint: list section header or label
+    semantic_role: section_header
   - text: Create campaign
-    locator_hint: button
+    locator_hint: button at top of page
     semantic_role: button
-  source_text: Click **Create campaign** to see the campaign creation wizard
-- step_id: step-3a
-  description: Navigate to Entitlement Management and click the Bundles tab
+  source_text: 'Click on the **Campaigns** tab
+
+    2. You should see a list of **Certification campaigns** with their status
+
+    3. The page should show active, scheduled, and completed campaigns
+
+    4. Look for the **Create campaign** button at the top of the page'
+- step_id: step-3
+  description: Click an active campaign to review its details including review progress
+    and action options
   navigation:
   - Identity Governance
-  - Entitlement Management
+  - Access Certifications
+  - Campaigns
+  - <active campaign>
   url_hint: ''
   labels:
-  - text: Entitlement Management
-    locator_hint: left sidebar navigation item
+  - text: Review progress
+    locator_hint: summary section header
+    semantic_role: section_header
+  - text: Pending reviews
+    locator_hint: statistic label
     semantic_role: other
-  - text: Bundles
+  - text: Approved
+    locator_hint: statistic label
+    semantic_role: other
+  - text: Revoked
+    locator_hint: statistic label
+    semantic_role: other
+  - text: End campaign
+    locator_hint: campaign actions option
+    semantic_role: button
+  source_text: 'Click on any active campaign to view its details
+
+    2. You should see the campaign''s **Review progress** summary
+
+    3. The campaign detail page shows the number of **Pending reviews**, **Approved**
+    items, and **Revoked** items
+
+    4. Look for the **End campaign** option in the campaign actions'
+- step_id: step-4
+  description: Click the Preconfigured campaigns tab to view certification templates
+  navigation:
+  - Identity Governance
+  - Access Certifications
+  - Preconfigured campaigns
+  url_hint: ''
+  labels:
+  - text: Preconfigured campaigns
     locator_hint: tab
     semantic_role: tab
-  source_text: 'Navigate to **Identity Governance > Entitlement Management**
+  source_text: 'Click on the **Preconfigured campaigns** tab
 
-    2. Click on the **Bundles** tab'
-- step_id: step-3b
-  description: Verify the Entitlement Bundles page is visible with bundle details
-  navigation:
-  - Identity Governance
-  - Entitlement Management
-  - Bundles
-  url_hint: ''
-  labels:
-  - text: Entitlement Bundles
-    locator_hint: page header
-    semantic_role: section_header
-  source_text: 'You should see the **Entitlement Bundles** page with existing bundles
-    listed
+    2. You should see templates for common certification scenarios
 
-    4. Each bundle shows its name, status, and the number of assigned principals'
-- step_id: step-4a
-  description: Navigate to Governance Labels and verify label names are visible
-  navigation:
-  - Identity Governance
-  - Governance Labels
-  url_hint: ''
-  labels:
-  - text: Governance Labels
-    locator_hint: left sidebar navigation item
-    semantic_role: other
-  - text: SOX
-    locator_hint: label item
-    semantic_role: other
-  - text: Crown Jewel
-    locator_hint: label item
-    semantic_role: other
-  - text: Privileged
-    locator_hint: label item
-    semantic_role: other
-  source_text: 'Navigate to **Identity Governance > Governance Labels**
-
-    2. You should see labels such as **SOX**, **Crown Jewel**, and **Privileged**'
-- step_id: step-4b
-  description: Verify the Create label button is present on the Governance Labels
-    page
-  navigation:
-  - Identity Governance
-  - Governance Labels
-  url_hint: ''
-  labels:
-  - text: Create label
-    locator_hint: button
-    semantic_role: button
-  source_text: The labels page should show a **Create label** button
+    3. The page lists preconfigured campaign types with descriptions'
 - step_id: step-5
-  description: Navigate to Access Requests and review Request Conditions tab
+  description: Click the Security access reviews tab to view privileged access review
+    options
   navigation:
   - Identity Governance
-  - Access Requests
+  - Access Certifications
+  - Security access reviews
   url_hint: ''
   labels:
-  - text: Access Requests
-    locator_hint: left sidebar navigation item
-    semantic_role: other
-  - text: Request Conditions
+  - text: Security access reviews
     locator_hint: tab
     semantic_role: tab
-  - text: Approval Sequences
-    locator_hint: section header or column header
-    semantic_role: section_header
-  source_text: 'Navigate to **Identity Governance > Access Requests**
+  source_text: 'Click on the **Security access reviews** tab
 
-    2. Click on the **Request Conditions** tab
+    2. You should see options for security-focused access reviews
 
-    3. You should see configured request conditions for self-service access
-
-    4. The page should display **Approval Sequences** for each request condition'
+    3. This section helps identify and review privileged access across the organization'

@@ -355,16 +355,16 @@ ADMIN_URL_MAP = {
     "groups": "/admin/groups",
     "applications": "/admin/apps/active",
     "identity governance": "/admin/identity-governance",
-    "access certifications": "/admin/access-certification",
-    "access certification": "/admin/access-certification",
-    "campaigns": "/admin/access-certification",
-    "entitlement management": "/admin/entitlement-management",
-    "entitlements": "/admin/entitlement-management",
-    "bundles": "/admin/entitlement-management/bundles",
-    "governance labels": "/admin/identity-governance/governance-label",
-    "labels": "/admin/identity-governance/governance-label",
-    "access requests": "/admin/access-requests",
-    "request conditions": "/admin/access-requests",
+    "access certifications": "/admin/governance/campaigns/active",
+    "access certification": "/admin/governance/campaigns/active",
+    "campaigns": "/admin/governance/campaigns/active",
+    "entitlement management": "/admin/governance/entitlement-management",
+    "entitlements": "/admin/governance/entitlement-management",
+    "bundles": "/admin/governance/entitlement-management/bundles",
+    "governance labels": "/admin/governance/governance-labels",
+    "labels": "/admin/governance/governance-labels",
+    "access requests": "/admin/governance/access-requests",
+    "request conditions": "/admin/governance/access-requests",
     "security": "/admin/access/authentication",
     "authentication policies": "/admin/access/authentication",
     "network zones": "/admin/access/networks",
@@ -444,8 +444,35 @@ async def _navigate_breadcrumbs(page, breadcrumbs: list[str], org_url: str):
     """
     base_url = org_url.rstrip("/")
 
+    # Try the LAST breadcrumb for direct URL first (most specific)
+    last_crumb = breadcrumbs[-1].lower().strip() if breadcrumbs else ""
+    if last_crumb in ADMIN_URL_MAP:
+        url = f"{base_url}{ADMIN_URL_MAP[last_crumb]}"
+        try:
+            await page.goto(url, wait_until="networkidle", timeout=15000)
+            await asyncio.sleep(2)
+            title = await page.title()
+            if "not found" not in title.lower():
+                return  # Successfully navigated via URL
+        except Exception:
+            pass
+
     for i, crumb in enumerate(breadcrumbs):
         crumb_lower = crumb.lower().strip()
+
+        # Strategy 0: Direct URL navigation
+        if crumb_lower in ADMIN_URL_MAP:
+            url = f"{base_url}{ADMIN_URL_MAP[crumb_lower]}"
+            try:
+                await page.goto(url, wait_until="networkidle", timeout=15000)
+                await asyncio.sleep(2)
+                # Check if it's a 404
+                title = await page.title()
+                if "not found" not in title.lower():
+                    continue
+                # 404 — fall through to click-based navigation
+            except Exception:
+                pass
 
         # Strategy 1: Dismiss popups and click sidebar/page elements
         await _dismiss_popups(page)
