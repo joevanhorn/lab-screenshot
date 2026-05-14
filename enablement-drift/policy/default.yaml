@@ -1,0 +1,13 @@
+# Drift classification → action policy
+auto_merge_classes:
+  - label_rename
+  - terminology_update
+  - broken_link
+
+confidence_threshold: 0.85
+
+require_human_review_classes:
+  - procedural_change
+  - outcome_change
+  - missing_element
+  - ambiguous
